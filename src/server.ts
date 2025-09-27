@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
 import { notesController } from './controllers/notesController';
 import { db } from './db';
 
@@ -12,9 +14,24 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Probar conexión a BD al iniciar
+// Función para inicializar la base de datos con el schema
+const initDB = async () => {
+  try {
+    const schemaPath = path.join(__dirname, '../schema.sql');
+    const schema = fs.readFileSync(schemaPath, 'utf8');
+    await db.query(schema);
+    console.log('✅ Schema ejecutado correctamente');
+  } catch (error) {
+    console.error('❌ Error ejecutando schema:', error);
+  }
+};
+
+// Probar conexión a BD y ejecutar schema al iniciar
 db.query('SELECT NOW()')
-  .then(() => console.log('✅ Base de datos conectada'))
+  .then(() => {
+    console.log('✅ Base de datos conectada');
+    return initDB();
+  })
   .catch((err: any) => console.error('❌ Error BD:', err));
 
 // Rutas básicas
