@@ -26,6 +26,18 @@ export class AIService {
   async classifyNote(content: string): Promise<ClassificationResult> {
     console.log('🤖 Clasificando nota con IA...');
 
+    // Obtener fecha y hora actual del sistema
+    const now = new Date();
+    const currentDate = now.toISOString().split('T')[0]; // YYYY-MM-DD
+    const currentTime = now.toTimeString().split(' ')[0].substring(0, 5); // HH:MM
+    const dayOfWeek = now.toLocaleDateString('es-ES', { weekday: 'long' });
+    
+    // Calcular fechas futuras para el prompt
+    const tomorrow = new Date(now.getTime() + 86400000).toISOString().split('T')[0];
+    const dayAfterTomorrow = new Date(now.getTime() + 172800000).toISOString().split('T')[0];
+
+    console.log(`📅 Contexto de fecha actual: ${currentDate} (${dayOfWeek}) ${currentTime}`);
+
     try {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -39,6 +51,15 @@ export class AIService {
             {
               role: 'system',
               content: `Eres un asistente que clasifica y resume notas/eventos de forma creativa y variada.
+
+⏰ FECHA Y HORA ACTUAL DEL SISTEMA:
+- HOY es: ${currentDate}
+- Día de la semana: ${dayOfWeek}
+- Hora actual: ${currentTime}
+- MAÑANA será: ${tomorrow}
+- PASADO MAÑANA será: ${dayAfterTomorrow}
+
+⚠️ IMPORTANTE: USA ESTAS FECHAS COMO REFERENCIA para calcular todas las fechas relativas.
 
 🎯 REGLAS CRÍTICAS - DEBES SEGUIR ESTRICTAMENTE:
 
@@ -54,15 +75,16 @@ export class AIService {
    * Dinero/Compras/Pagos: 💰 💵 💳 🛒 🏷️ 🏦 💸
    * Películas/Cine/Series: 🎬 🎥 🍿 📺 🎪 🎭 🎞️
    * Ejercicio/Gym/Deporte: 🏋️ 💪 🏃 ⚽ 🧘 🚴 🏊 ⛹️
-   * Trabajo/Reuniones/Oficina: 💼 📊 🖥️ 📈 👔 💻 📑
+   * Trabajo/Reuniones/Oficina: 💼 📊 🖥️ 📈 👔 💻 🔑
    * Viajes/Vacaciones: ✈️ 🗺️ 🏖️ 🧳 🚗 🏝️ 🗼 🏔️
    * Educación/Estudio: 📚 ✏️ 🎓 📖 👨‍🎓 🏫 📝
    * Mascotas/Veterinario: 🐕 🐈 🐾 🦴 🐶 🐱 🐕‍🦺
    * Casa/Hogar/Limpieza: 🏠 🧹 🛋️ 🛁 🚪 🪴
    * Belleza/Peluquería: 💇 💅 💄 ✂️ 🪮
-   * Citas/Romance: 💑 ❤️ 💕 🌹 💐 🥰
+   * Citas/Romance: 💑 ❤️ 💕 🌹 💍 🥰
    * Bebidas/Bar/Café: ☕ 🍺 🍷 🥂 🍹 🍵
    * Música/Conciertos: 🎵 🎸 🎤 🎧 🎹 🥁
+   * Religión/Misa: ⛪ 🙏 ✝️ 📿
    
    ⚠️ Si no hay un emoji perfecto, elige el más cercano pero NUNCA uses 📅 🗓️ 📝 📌
 
@@ -89,14 +111,30 @@ export class AIService {
 4. HASHTAGS:
    - PROHIBIDO usar #general #nota #imagen
    - SOLO hashtags temáticos específicos
-   - Ejemplos: #cumpleaños #médico #pago #película #gym #trabajo #viaje
+   - Ejemplos: #cumpleaños #médico #pago #película #gym #trabajo #viaje #misa #religión
 
 5. DETECCIÓN DE FECHAS EN ESPAÑOL:
-   - "mañana" = fecha de mañana
-   - "pasado mañana" = dentro de 2 días
-   - "el lunes", "el martes", etc = próximo día de la semana
-   - "el 15" = día 15 del mes actual o siguiente
-   - "el 15 de octubre" = fecha específica
+   Usa ${currentDate} (${dayOfWeek}) como punto de partida para calcular:
+   - "hoy" = ${currentDate}
+   - "mañana" = ${tomorrow}
+   - "pasado mañana" = ${dayAfterTomorrow}
+   - "el domingo", "el lunes", "el martes", etc = próximo día de la semana desde hoy
+   - "el 15" = día 15 del mes actual (si ya pasó, entonces mes siguiente)
+   - "el 15 de octubre" = fecha específica con año ${now.getFullYear()}
+   - Si solo mencionan hora sin fecha, asumir que es HOY (${currentDate})
+   
+   EJEMPLOS CONCRETOS:
+   - "mañana a las 3pm" → date: "${tomorrow}", time: "15:00"
+   - "pasado mañana 10am" → date: "${dayAfterTomorrow}", time: "10:00"
+   - "a las 5pm" (sin mención de día) → date: "${currentDate}", time: "17:00"
+   - "el domingo a las 10" → calcular próximo domingo desde ${currentDate}
+
+6. FORMATO DE HORA:
+   - Siempre en formato 24 horas HH:MM
+   - "3pm" = "15:00"
+   - "10am" = "10:00"
+   - "mediodía" = "12:00"
+   - "medianoche" = "00:00"
 
 Responde SIEMPRE en este formato JSON:
 {
@@ -134,7 +172,7 @@ Responde SIEMPRE en este formato JSON:
         result.emoji = this.getFallbackEmoji(content);
       }
       
-      console.log('✅ Clasificación:', result);
+      console.log('✅ Clasificación completa:', result);
       return result;
 
     } catch (error) {
@@ -169,6 +207,7 @@ Responde SIEMPRE en este formato JSON:
     if (lowerContent.includes('viaje') || lowerContent.includes('viajar') || lowerContent.includes('vacaciones')) return '✈️';
     if (lowerContent.includes('estudiar') || lowerContent.includes('clase') || lowerContent.includes('escuela')) return '📚';
     if (lowerContent.includes('mascota') || lowerContent.includes('perro') || lowerContent.includes('gato')) return '🐾';
+    if (lowerContent.includes('misa') || lowerContent.includes('iglesia') || lowerContent.includes('religión')) return '⛪';
     
     return '💡';
   }
