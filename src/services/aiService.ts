@@ -1,96 +1,117 @@
-import OpenAI from 'openai';
+import dotenv from 'dotenv';
+dotenv.config();
 
-interface NoteClassification {
-  intent: 'simple_note' | 'calendar_event' | 'reminder' | 'social_event';
+interface ClassificationResult {
+  intent: 'calendar_event' | 'reminder' | 'simple_note';
   entities: {
-    date?: string;
-    time?: string;
-    location?: string;
-    participants?: string[];
-    hashtags?: string[];
+    date: string | null;
+    time: string | null;
+    location: string | null;
+    participants: string[];
+    hashtags: string[];
   };
   confidence: number;
-  suggestedTitle?: string;
-  emoji?: string;
+  suggestedTitle: string;
+  emoji: string;
+  summary: string;
 }
 
 export class AIService {
-  private client: OpenAI;
+  private apiKey: string;
 
   constructor() {
-    this.client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY || '',
-    });
+    this.apiKey = process.env.OPENAI_API_KEY || '';
   }
 
-  async classifyNote(noteContent: string): Promise<NoteClassification> {
-    const today = new Date();
-    const currentDate = today.toISOString().split('T')[0];
-    const dayOfWeek = today.getDay();
-    
-    const prompt = `Fecha actual: ${currentDate} (día de la semana: ${dayOfWeek}, donde 0=domingo)
+  async classifyNote(content: string): Promise<ClassificationResult> {
+    console.log('🤖 Clasificando nota con IA...');
 
-Clasifica esta nota: "${noteContent}"
-
-REGLAS ESTRICTAS:
-1. "calendar_event" = Menciona fecha/tiempo Y hora específica
-   Ejemplos: "reunión mañana a las 9", "cita viernes 3pm", "evento el martes 10:30"
-
-2. "reminder" = Menciona fecha/tiempo PERO SIN hora específica  
-   Ejemplos: "compras mañana", "llamar el lunes", "comprar regalo mañana"
-
-3. "social_event" = Menciona personas Y tiene fecha/hora
-   Ejemplos: "cena con Ana mañana 8pm", "reunión con Maria viernes 5pm"
-
-4. "simple_note" = NO menciona fecha ni tiempo
-   Ejemplos: "comprar leche", "idea para proyecto", "recordar contraseña"
-
-CÁLCULO DE FECHAS:
-- "mañana" = ${new Date(today.getTime() + 86400000).toISOString().split('T')[0]}
-- "lunes/martes/etc" = próxima ocurrencia de ese día
-- "la otra semana" = próxima semana
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            {
+              role: 'system',
+              content: `Eres un asistente que clasifica y resume notas/eventos. 
 
 IMPORTANTE:
-- Genera emoji relevante al contenido
-- Genera 2-3 hashtags relevantes
-- Si tiene hora específica (9am, 3pm, 10:30) → calendar_event
-- Si solo dice día sin hora → reminder
-- Si no dice ni día ni hora → simple_note
+- Genera un RESUMEN corto y claro del contenido, NO repitas textualmente lo que dijo el usuario
+- El resumen debe ser conciso (máximo 10 palabras)
+- Para el título del evento, usa un resumen breve y descriptivo
+- Elige UN emoji relevante y variado según el contexto:
+  * Cumpleaños/Fiestas: 🎉🎂🎈🎊🥳
+  * Médico/Salud: 🏥💊⚕️🩺💉
+  * Comida/Restaurante: 🍕🍔🍜🍱🥘
+  * Dinero/Compras: 💰💵💳🛒🏷️
+  * Películas/Entretenimiento: 🎬🎥🍿📺🎪
+  * Ejercicio/Gym: 🏋️‍♂️💪🏃‍♂️⚽🧘
+  * Trabajo/Reuniones: 💼📊🖥️📁👔
+  * Viajes: ✈️🗺️🏖️🧳🚗
+  * Educación: 📚✏️🎓📖👨‍🎓
+  * Mascotas: 🐕🐈🐾🦴🐶
+- Hashtags deben ser temáticos y relevantes (#cumpleaños, #salud, #compras, #película, #ejercicio, #trabajo, etc.)
+- NUNCA uses hashtags genéricos como #imagen, #general, #nota
+
+Detecta fechas en español:
+- "mañana" = fecha de mañana
+- "el lunes", "el martes", etc = próximo día de la semana
+- "el 15" = día 15 del mes actual o siguiente
+- "el 15 de octubre" = fecha específica
 
 Responde en JSON:
 {
-  "intent": "<tipo>",
+  "intent": "calendar_event" | "reminder" | "simple_note",
   "entities": {
     "date": "YYYY-MM-DD o null",
     "time": "HH:MM o null",
     "location": "string o null",
-    "participants": ["nombre"] o [],
-    "hashtags": ["#tag1", "#tag2"]
+    "participants": ["nombres"],
+    "hashtags": ["#tema1", "#tema2"]
   },
-  "confidence": 0.9,
-  "suggestedTitle": "título corto",
-  "emoji": "😊"
-}`;
+  "confidence": 0.0-1.0,
+  "suggestedTitle": "título breve del evento",
+  "emoji": "emoji único y relevante",
+  "summary": "resumen corto en máximo 10 palabras"
+}`
+            },
+            {
+              role: 'user',
+              content: content
+            }
+          ],
+          response_format: { type: "json_object" },
+          temperature: 0.7
+        })
+      });
 
-    const completion = await this.client.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content: "Eres experto clasificando notas en español. Responde SOLO JSON válido."
+      const data = await response.json();
+      const result = JSON.parse(data.choices[0].message.content);
+      
+      console.log('✅ Clasificación:', result);
+      return result;
+
+    } catch (error) {
+      console.error('Error clasificando nota:', error);
+      return {
+        intent: 'simple_note',
+        entities: {
+          date: null,
+          time: null,
+          location: null,
+          participants: [],
+          hashtags: ['#general']
         },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      temperature: 0.1,
-      response_format: { type: "json_object" }
-    });
-
-    const responseText = completion.choices[0].message.content || '{}';
-    return JSON.parse(responseText);
+        confidence: 0.5,
+        suggestedTitle: content.substring(0, 30),
+        emoji: '📝',
+        summary: content.substring(0, 50)
+      };
+    }
   }
 }
-
-export const aiService = new AIService();
