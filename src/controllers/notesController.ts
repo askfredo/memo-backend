@@ -101,7 +101,7 @@ export class NotesController {
   async updateNote(req: Request, res: Response) {
     try {
       const { noteId } = req.params;
-      const { content, isArchived } = req.body;
+      const { content, isArchived, isFavorite } = req.body;
       const userId = '00000000-0000-0000-0000-000000000001';
 
       const updates: string[] = [];
@@ -109,15 +109,25 @@ export class NotesController {
       let paramCount = 1;
 
       if (content !== undefined) {
-        updates.push(`content = $${paramCount}`);
+        updates.push(`content = ${paramCount}`);
         values.push(content);
         paramCount++;
       }
 
       if (isArchived !== undefined) {
-        updates.push(`is_archived = $${paramCount}`);
+        updates.push(`is_archived = ${paramCount}`);
         values.push(isArchived);
         paramCount++;
+      }
+
+      if (isFavorite !== undefined) {
+        updates.push(`is_favorite = ${paramCount}`);
+        values.push(isFavorite);
+        paramCount++;
+      }
+
+      if (updates.length === 0) {
+        return res.status(400).json({ error: 'No updates provided' });
       }
 
       values.push(noteId, userId);
@@ -125,7 +135,7 @@ export class NotesController {
       const result = await db.query(
         `UPDATE notes 
          SET ${updates.join(', ')}
-         WHERE id = $${paramCount} AND user_id = $${paramCount + 1}
+         WHERE id = ${paramCount} AND user_id = ${paramCount + 1}
          RETURNING *`,
         values
       );
