@@ -19,6 +19,13 @@ const initDB = async () => {
     const schemaPath = path.join(__dirname, '../schema.sql');
     const schema = fs.readFileSync(schemaPath, 'utf8');
     await db.query(schema);
+    
+    // Agregar columnas que faltan
+    await db.query(`
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS image_data TEXT;
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
+    `);
+    
     console.log('✅ Schema ejecutado correctamente');
   } catch (error) {
     console.error('❌ Error ejecutando schema:', error);
@@ -54,7 +61,6 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Rutas de notas - MODIFICADO para excluir notas con eventos
 app.post('/api/notes', notesController.createNote.bind(notesController));
 app.get('/api/notes', notesController.getNotes.bind(notesController));
 app.patch('/api/notes/:noteId', notesController.updateNote.bind(notesController));
