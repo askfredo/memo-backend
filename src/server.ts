@@ -75,18 +75,19 @@ app.post('/api/notes/from-image', async (req, res) => {
 
     const extractedInfo = await analyzeEventImage(imageBase64);
     
+    // Si detectó un evento, procesarlo como calendario
     if (extractedInfo.isEvent) {
       const result = await notesController.processImageNote(extractedInfo.text, userId);
-      return res.json({ ...result, type: 'event', imageData: imageBase64 });
+      return res.json({ ...result, type: 'event' });
     } else {
+      // Si no es evento, crear nota con contexto de la imagen
       const noteResult = await db.query(
         `INSERT INTO notes (user_id, content, note_type, hashtags, ai_classification)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING *`,
-        [userId, extractedInfo.text, 'simple_note', [extractedInfo.hashtag || '#info'], 
-         JSON.stringify({ context: 'from_image', imageData: imageBase64 })]
+        [userId, extractedInfo.text, 'simple_note', ['#imagen'], JSON.stringify({ context: 'from_image' })]
       );
-      return res.json({ note: noteResult.rows[0], type: 'note', imageData: imageBase64 });
+      return res.json({ note: noteResult.rows[0], type: 'note' });
     }
   } catch (error) {
     console.error('Error processing image:', error);
@@ -108,20 +109,7 @@ async function analyzeEventImage(imageBase64: string) {
       messages: [
         {
           role: 'system',
-          content: `Analiza esta imagen y determina si es un evento o información relevante.
-
-Si ES EVENTO (invitación, poster, flyer):
-- Extrae: fecha, hora, título, ubicación
-- Genera resumen corto (máximo 10 palabras)
-- Elige hashtag temático (#concierto, #fiesta, #reunión, etc.)
-
-Si NO ES EVENTO pero tiene información útil (ofertas, cupones, info):
-- Resume la información clave en máximo 10 palabras
-- Elige hashtag relevante (#oferta, #cupón, #descuento, #info, etc.)
-
-NO uses "#imagen" como hashtag.
-
-Responde en JSON: {isEvent: boolean, text: string (resumen corto), hashtag: string}`
+          content: 'Analiza si esta imagen es de un evento (invitación, poster, flyer, screenshot de evento). Si es evento, extrae: fecha, hora, título, ubicación. Si NO es evento, describe brevemente qué muestra la imagen. Responde en JSON: {isEvent: boolean, text: string}'
         },
         {
           role: 'user',
@@ -135,14 +123,13 @@ Responde en JSON: {isEvent: boolean, text: string (resumen corto), hashtag: stri
           ]
         }
       ],
-      max_tokens: 200,
+      max_tokens: 300,
       response_format: { type: "json_object" }
     })
   });
 
   const data = await response.json();
-  const result = JSON.parse(data.choices[0].message.content);
-  return result;
+  return JSON.parse(data.choices[0].message.content);
 }
 
 // Rutas de calendario
