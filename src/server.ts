@@ -12,7 +12,7 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 // Función para inicializar la base de datos con el schema
 const initDB = async () => {
@@ -64,6 +64,74 @@ app.get('/api/notes', notesController.getNotes.bind(notesController));
 app.patch('/api/notes/:noteId', notesController.updateNote.bind(notesController));
 app.delete('/api/notes/:noteId', notesController.deleteNote.bind(notesController));
 
+// Procesar imagen compartida
+app.post('/api/notes/from-image', async (req, res) => {
+  try {
+    const { imageBase64, userId = '00000000-0000-0000-0000-000000000001' } = req.body;
+
+    if (!imageBase64) {
+      return res.status(400).json({ error: 'Image required' });
+    }
+
+    const extractedInfo = await analyzeEventImage(imageBase64);
+    
+    // Si detectó un evento, procesarlo como calendario
+    if (extractedInfo.isEvent) {
+      const result = await notesController.processImageNote(extractedInfo.text, userId);
+      return res.json({ ...result, type: 'event' });
+    } else {
+      // Si no es evento, crear nota con contexto de la imagen
+      const noteResult = await db.query(
+        `INSERT INTO notes (user_id, content, note_type, hashtags, ai_classification)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
+        [userId, extractedInfo.text, 'simple_note', ['#imagen'], JSON.stringify({ context: 'from_image' })]
+      );
+      return res.json({ note: noteResult.rows[0], type: 'note' });
+    }
+  } catch (error) {
+    console.error('Error processing image:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+async function analyzeEventImage(imageBase64: string) {
+  const openaiApiKey = process.env.OPENAI_API_KEY;
+  
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${openaiApiKey}`
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system',
+          content: 'Analiza si esta imagen es de un evento (invitación, poster, flyer, screenshot de evento). Si es evento, extrae: fecha, hora, título, ubicación. Si NO es evento, describe brevemente qué muestra la imagen. Responde en JSON: {isEvent: boolean, text: string}'
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:image/jpeg;base64,${imageBase64}`
+              }
+            }
+          ]
+        }
+      ],
+      max_tokens: 300,
+      response_format: { type: "json_object" }
+    })
+  });
+
+  const data = await response.json();
+  return JSON.parse(data.choices[0].message.content);
+}
+
 // Rutas de calendario
 app.get('/api/calendar/events', async (req, res) => {
   try {
@@ -93,7 +161,6 @@ app.delete('/api/calendar/events/:eventId', async (req, res) => {
     const { eventId } = req.params;
     const userId = '00000000-0000-0000-0000-000000000001';
     
-    // Primero obtener el note_id del evento
     const eventResult = await db.query(
       'SELECT note_id FROM calendar_events WHERE id = $1 AND user_id = $2',
       [eventId, userId]
@@ -105,13 +172,11 @@ app.delete('/api/calendar/events/:eventId', async (req, res) => {
 
     const noteId = eventResult.rows[0].note_id;
 
-    // Eliminar el evento
     await db.query(
       'DELETE FROM calendar_events WHERE id = $1 AND user_id = $2',
       [eventId, userId]
     );
 
-    // Eliminar la nota asociada si existe
     if (noteId) {
       await db.query(
         'DELETE FROM notes WHERE id = $1 AND user_id = $2',

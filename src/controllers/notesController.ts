@@ -31,21 +31,17 @@ export class NotesController {
       const note = noteResult.rows[0];
 
       if (classification.intent === 'calendar_event' || classification.intent === 'reminder') {
-        // Construir fecha/hora del evento
         let startDateTime: Date;
         if (classification.entities.date) {
           startDateTime = new Date(classification.entities.date);
           
-          // Si hay hora específica, usarla; si no, es evento all-day (00:00:00)
           if (classification.entities.time) {
             const [hours, minutes] = classification.entities.time.split(':');
             startDateTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
           } else {
-            // Evento all-day: usar 00:00:00
             startDateTime.setHours(0, 0, 0, 0);
           }
         } else {
-          // Si no hay fecha, usar mañana por defecto a las 09:00
           startDateTime = new Date();
           startDateTime.setDate(startDateTime.getDate() + 1);
           startDateTime.setHours(9, 0, 0, 0);
@@ -79,6 +75,49 @@ export class NotesController {
       console.error('Error creating note:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
+  }
+
+  async processImageNote(extractedText: string, userId: string) {
+    const classification = await this.aiService.classifyNote(extractedText);
+
+    const noteResult = await db.query(
+      `INSERT INTO notes (user_id, content, note_type, hashtags, ai_classification)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [userId, extractedText, classification.intent, classification.entities.hashtags || [], JSON.stringify(classification)]
+    );
+
+    const note = noteResult.rows[0];
+
+    if (classification.intent === 'calendar_event' || classification.intent === 'reminder') {
+      let startDateTime: Date;
+      if (classification.entities.date) {
+        startDateTime = new Date(classification.entities.date);
+        if (classification.entities.time) {
+          const [hours, minutes] = classification.entities.time.split(':');
+          startDateTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+        } else {
+          startDateTime.setHours(0, 0, 0, 0);
+        }
+      } else {
+        startDateTime = new Date();
+        startDateTime.setDate(startDateTime.getDate() + 1);
+        startDateTime.setHours(9, 0, 0, 0);
+      }
+
+      const eventResult = await db.query(
+        `INSERT INTO calendar_events 
+         (user_id, note_id, title, description, start_datetime, location, is_social)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [userId, note.id, classification.suggestedTitle, extractedText, startDateTime.toISOString(), 
+         classification.entities.location || null, (classification.entities.participants?.length || 0) > 0]
+      );
+
+      return { note, event: eventResult.rows[0], classification };
+    }
+
+    return { note, classification };
   }
 
   async getNotes(req: Request, res: Response) {
