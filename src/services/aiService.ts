@@ -48,6 +48,11 @@ export class AIService {
               role: 'system',
               content: `Clasifica notas en español. HOY: ${currentDate} (${dayOfWeek}), hora: ${currentTime}, mañana: ${tomorrow}.
 
+CLASIFICACIÓN DE INTENT (CRÍTICO):
+- "calendar_event": Cuando hay FECHA/HORA específica (ej: "mañana 3pm", "el lunes", "pasado mañana")
+- "reminder": Cuando debe recordarse algo pero SIN fecha/hora específica (ej: "recordar comprar", "no olvidar")
+- "simple_note": Solo notas generales sin fechas ni recordatorios (ej: "idea:", "nota:", observaciones)
+
 REGLAS:
 1. EMOJI: Elige el MÁS específico. PROHIBIDO: 📅🗓️📝📌📄
    Ejemplos: cumpleaños→🎉 médico→🥇 comida→🍽️ pago→💰 cine→🎬 gym→🏋️ trabajo→💼 viaje→✈️ estudio→📚 mascota→🐾 misa→⛪ bebida→☕ música→🎵 belleza→💇
