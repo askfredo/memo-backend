@@ -14,15 +14,15 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Función para inicializar la base de datos con el schema
+// FunciÃ³n para inicializar la base de datos con el schema
 const initDB = async () => {
   try {
     const schemaPath = path.join(__dirname, '../schema.sql');
     const schema = fs.readFileSync(schemaPath, 'utf8');
     await db.query(schema);
-    console.log('✅ Schema ejecutado correctamente');
+    console.log('âœ… Schema ejecutado correctamente');
   } catch (error) {
-    console.error('❌ Error ejecutando schema:', error);
+    console.error('âŒ Error ejecutando schema:', error);
   }
 };
 
@@ -34,26 +34,26 @@ const createTestUser = async () => {
       VALUES ('00000000-0000-0000-0000-000000000001', 'test@memovoz.com', 'testuser', 'Usuario de Prueba')
       ON CONFLICT (id) DO NOTHING
     `);
-    console.log('✅ Usuario de prueba listo');
+    console.log('âœ… Usuario de prueba listo');
   } catch (error) {
     console.error('Error creando usuario de prueba:', error);
   }
 };
 
-// Probar conexión a BD y ejecutar schema al iniciar
+// Probar conexiÃ³n a BD y ejecutar schema al iniciar
 db.query('SELECT NOW()')
   .then(() => {
-    console.log('✅ Base de datos conectada');
+    console.log('âœ… Base de datos conectada');
     return initDB();
   })
   .then(() => createTestUser())
-  .catch((err: any) => console.error('❌ Error BD:', err));
+  .catch((err: any) => console.error('âŒ Error BD:', err));
 
-// Rutas básicas
+// Rutas bÃ¡sicas
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
-    message: '¡Backend funcionando correctamente!',
+    message: 'Â¡Backend funcionando correctamente!',
     timestamp: new Date().toISOString()
   });
 });
@@ -75,7 +75,7 @@ app.post('/api/notes/from-image', async (req, res) => {
 
     const extractedInfo = await analyzeEventImage(imageBase64);
     
-    // Si detectó un evento, procesarlo como calendario
+    // Si detectÃ³ un evento, procesarlo como calendario
     if (extractedInfo.isEvent) {
       const result = await notesController.processImageNote(extractedInfo.text, userId);
       return res.json({ ...result, type: 'event' });
@@ -109,7 +109,7 @@ async function analyzeEventImage(imageBase64: string) {
       messages: [
         {
           role: 'system',
-          content: 'Analiza si esta imagen es de un evento (invitación, poster, flyer, screenshot de evento). Si es evento, extrae: fecha, hora, título, ubicación. Si NO es evento, describe brevemente qué muestra la imagen. Responde en JSON: {isEvent: boolean, text: string}'
+          content: 'Analiza si esta imagen es de un evento (invitaciÃ³n, poster, flyer, screenshot de evento). Si es evento, extrae: fecha, hora, tÃ­tulo, ubicaciÃ³n. Si NO es evento, describe brevemente quÃ© muestra la imagen. Responde en JSON: {isEvent: boolean, text: string}'
         },
         {
           role: 'user',
@@ -192,8 +192,8 @@ app.delete('/api/calendar/events/:eventId', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
-  console.log(`📝 Prueba: http://localhost:${PORT}/api/health`);
-  console.log(`📋 Ver notas: GET http://localhost:${PORT}/api/notes`);
-  console.log(`➕ Crear nota: POST http://localhost:${PORT}/api/notes`);
+  console.log(`ðŸš€ Servidor corriendo en http://localhost:${PORT}`);
+  console.log(`ðŸ“ Prueba: http://localhost:${PORT}/api/health`);
+  console.log(`ðŸ“‹ Ver notas: GET http://localhost:${PORT}/api/notes`);
+  console.log(`âž• Crear nota: POST http://localhost:${PORT}/api/notes`);
 });
