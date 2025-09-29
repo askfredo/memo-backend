@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { db } from '../db';
+import { db } from '../db/index';
 import { AIService } from '../services/aiService';
 
 const aiService = new AIService();
@@ -39,7 +39,6 @@ export class NotesController {
           classification.entities.time
         );
 
-        // Incluir el emoji al inicio del título
         const titleWithEmoji = `${classification.emoji} ${classification.suggestedTitle}`;
 
         console.log('📅 Creando evento de calendario:', {
@@ -54,7 +53,7 @@ export class NotesController {
           [
             userId,
             note.id,
-            titleWithEmoji,  // Título con emoji incluido
+            titleWithEmoji,
             classification.summary,
             startDatetime,
             classification.entities.location,
@@ -83,10 +82,12 @@ export class NotesController {
     try {
       const userId = req.query.userId || '00000000-0000-0000-0000-000000000001';
       
+      // MODIFICADO: Excluir notas que tienen eventos de calendario asociados
       const result = await db.query(
-        `SELECT * FROM notes 
-         WHERE user_id = $1 
-         ORDER BY created_at DESC`,
+        `SELECT n.* FROM notes n
+         LEFT JOIN calendar_events ce ON ce.note_id = n.id
+         WHERE n.user_id = $1 AND ce.id IS NULL
+         ORDER BY n.created_at DESC`,
         [userId]
       );
 
@@ -145,6 +146,13 @@ export class NotesController {
       const { noteId } = req.params;
       const userId = '00000000-0000-0000-0000-000000000001';
 
+      // MODIFICADO: Primero eliminar eventos asociados
+      await db.query(
+        'DELETE FROM calendar_events WHERE note_id = $1 AND user_id = $2',
+        [noteId, userId]
+      );
+
+      // Luego eliminar la nota
       const result = await db.query(
         'DELETE FROM notes WHERE id = $1 AND user_id = $2 RETURNING *',
         [noteId, userId]
@@ -179,7 +187,6 @@ export class NotesController {
         classification.entities.time
       );
 
-      // Incluir el emoji al inicio del título también para imágenes
       const titleWithEmoji = `${classification.emoji} ${classification.suggestedTitle}`;
 
       const eventResult = await db.query(
@@ -189,7 +196,7 @@ export class NotesController {
         [
           userId,
           note.id,
-          titleWithEmoji,  // Título con emoji incluido
+          titleWithEmoji,
           classification.summary,
           startDatetime,
           classification.entities.location,

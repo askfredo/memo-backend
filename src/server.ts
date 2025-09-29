@@ -1,225 +1,190 @@
-import { Request, Response } from 'express';
-import { db } from '../db';
-import { AIService } from '../services/aiService';
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
+import { notesController } from './controllers/notesController';
+import { db } from './db/index';
 
-const aiService = new AIService();
+dotenv.config();
 
-export class NotesController {
-  async createNote(req: Request, res: Response) {
-    try {
-      const { content, userId = '00000000-0000-0000-0000-000000000001' } = req.body;
+const app = express();
+const PORT = process.env.PORT || 3001;
 
-      if (!content || content.trim() === '') {
-        return res.status(400).json({ error: 'Content is required' });
-      }
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
 
-      console.log('📝 Procesando nueva nota:', content);
+const initDB = async () => {
+  try {
+    const schemaPath = path.join(__dirname, '../schema.sql');
+    const schema = fs.readFileSync(schemaPath, 'utf8');
+    await db.query(schema);
+    console.log('✅ Schema ejecutado correctamente');
+  } catch (error) {
+    console.error('❌ Error ejecutando schema:', error);
+  }
+};
 
-      const classification = await aiService.classifyNote(content);
-      console.log('🎯 Clasificación:', classification);
+const createTestUser = async () => {
+  try {
+    await db.query(`
+      INSERT INTO users (id, email, username, full_name) 
+      VALUES ('00000000-0000-0000-0000-000000000001', 'test@memovoz.com', 'testuser', 'Usuario de Prueba')
+      ON CONFLICT (id) DO NOTHING
+    `);
+    console.log('✅ Usuario de prueba listo');
+  } catch (error) {
+    console.error('Error creando usuario de prueba:', error);
+  }
+};
 
+db.query('SELECT NOW()')
+  .then(() => {
+    console.log('✅ Base de datos conectada');
+    return initDB();
+  })
+  .then(() => createTestUser())
+  .catch((err: any) => console.error('❌ Error BD:', err));
+
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    message: '¡Backend funcionando correctamente!',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Rutas de notas - MODIFICADO para excluir notas con eventos
+app.post('/api/notes', notesController.createNote.bind(notesController));
+app.get('/api/notes', notesController.getNotes.bind(notesController));
+app.patch('/api/notes/:noteId', notesController.updateNote.bind(notesController));
+app.delete('/api/notes/:noteId', notesController.deleteNote.bind(notesController));
+
+app.post('/api/notes/from-image', async (req, res) => {
+  try {
+    const { imageBase64, userId = '00000000-0000-0000-0000-000000000001' } = req.body;
+
+    if (!imageBase64) {
+      return res.status(400).json({ error: 'Image required' });
+    }
+
+    const extractedInfo = await analyzeEventImage(imageBase64);
+    
+    if (extractedInfo.isEvent) {
+      const result = await notesController.processImageNote(extractedInfo.text, userId);
+      return res.json({ ...result, type: 'event' });
+    } else {
       const noteResult = await db.query(
         `INSERT INTO notes (user_id, content, note_type, hashtags, ai_classification)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING *`,
-        [
-          userId,
-          content,
-          classification.intent,
-          classification.entities.hashtags,
-          JSON.stringify(classification)
-        ]
+        [userId, extractedInfo.text, 'simple_note', ['#imagen'], JSON.stringify({ context: 'from_image' })]
       );
+      return res.json({ note: noteResult.rows[0], type: 'note' });
+    }
+  } catch (error) {
+    console.error('Error processing image:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
-      const note = noteResult.rows[0];
-
-      if (classification.intent === 'calendar_event' && classification.entities.date) {
-        const startDatetime = this.buildDateTime(
-          classification.entities.date,
-          classification.entities.time
-        );
-
-        const titleWithEmoji = `${classification.emoji} ${classification.suggestedTitle}`;
-
-        console.log('📅 Creando evento de calendario:', {
-          title: titleWithEmoji,
-          datetime: startDatetime
-        });
-
-        const eventResult = await db.query(
-          `INSERT INTO calendar_events (user_id, note_id, title, description, start_datetime, location, color)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
-           RETURNING *`,
-          [
-            userId,
-            note.id,
-            titleWithEmoji,
-            classification.summary,
-            startDatetime,
-            classification.entities.location,
-            'blue'
+async function analyzeEventImage(imageBase64: string) {
+  const openaiApiKey = process.env.OPENAI_API_KEY;
+  
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${openaiApiKey}`
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system',
+          content: 'Analiza si esta imagen es de un evento (invitación, poster, flyer, screenshot de evento). Si es evento, extrae: fecha, hora, título, ubicación. Si NO es evento, describe brevemente qué muestra la imagen. Responde en JSON: {isEvent: boolean, text: string}'
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:image/jpeg;base64,${imageBase64}`
+              }
+            }
           ]
-        );
+        }
+      ],
+      max_tokens: 300,
+      response_format: { type: "json_object" }
+    })
+  });
 
-        return res.json({
-          note,
-          event: eventResult.rows[0],
-          classification
-        });
-      }
-
-      return res.json({
-        note,
-        classification
-      });
-    } catch (error) {
-      console.error('Error creating note:', error);
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  }
-
-  async getNotes(req: Request, res: Response) {
-    try {
-      const userId = req.query.userId || '00000000-0000-0000-0000-000000000001';
-      
-      // MODIFICADO: Excluir notas que tienen eventos de calendario asociados
-      const result = await db.query(
-        `SELECT n.* FROM notes n
-         LEFT JOIN calendar_events ce ON ce.note_id = n.id
-         WHERE n.user_id = $1 AND ce.id IS NULL
-         ORDER BY n.created_at DESC`,
-        [userId]
-      );
-
-      res.json({ notes: result.rows });
-    } catch (error) {
-      console.error('Error fetching notes:', error);
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  }
-
-  async updateNote(req: Request, res: Response) {
-    try {
-      const { noteId } = req.params;
-      const { content, isArchived } = req.body;
-      const userId = '00000000-0000-0000-0000-000000000001';
-
-      const updates: string[] = [];
-      const values: any[] = [];
-      let paramCount = 1;
-
-      if (content !== undefined) {
-        updates.push(`content = $${paramCount}`);
-        values.push(content);
-        paramCount++;
-      }
-
-      if (isArchived !== undefined) {
-        updates.push(`is_archived = $${paramCount}`);
-        values.push(isArchived);
-        paramCount++;
-      }
-
-      values.push(noteId, userId);
-
-      const result = await db.query(
-        `UPDATE notes 
-         SET ${updates.join(', ')}
-         WHERE id = $${paramCount} AND user_id = $${paramCount + 1}
-         RETURNING *`,
-        values
-      );
-
-      if (result.rows.length === 0) {
-        return res.status(404).json({ error: 'Note not found' });
-      }
-
-      res.json({ note: result.rows[0] });
-    } catch (error) {
-      console.error('Error updating note:', error);
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  }
-
-  async deleteNote(req: Request, res: Response) {
-    try {
-      const { noteId } = req.params;
-      const userId = '00000000-0000-0000-0000-000000000001';
-
-      // MODIFICADO: Primero eliminar eventos asociados
-      await db.query(
-        'DELETE FROM calendar_events WHERE note_id = $1 AND user_id = $2',
-        [noteId, userId]
-      );
-
-      // Luego eliminar la nota
-      const result = await db.query(
-        'DELETE FROM notes WHERE id = $1 AND user_id = $2 RETURNING *',
-        [noteId, userId]
-      );
-
-      if (result.rows.length === 0) {
-        return res.status(404).json({ error: 'Note not found' });
-      }
-
-      res.json({ success: true });
-    } catch (error) {
-      console.error('Error deleting note:', error);
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  }
-
-  async processImageNote(content: string, userId: string) {
-    const classification = await aiService.classifyNote(content);
-
-    const noteResult = await db.query(
-      `INSERT INTO notes (user_id, content, note_type, hashtags, ai_classification)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [userId, content, classification.intent, classification.entities.hashtags, JSON.stringify(classification)]
-    );
-
-    const note = noteResult.rows[0];
-
-    if (classification.intent === 'calendar_event' && classification.entities.date) {
-      const startDatetime = this.buildDateTime(
-        classification.entities.date,
-        classification.entities.time
-      );
-
-      const titleWithEmoji = `${classification.emoji} ${classification.suggestedTitle}`;
-
-      const eventResult = await db.query(
-        `INSERT INTO calendar_events (user_id, note_id, title, description, start_datetime, location, color)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING *`,
-        [
-          userId,
-          note.id,
-          titleWithEmoji,
-          classification.summary,
-          startDatetime,
-          classification.entities.location,
-          'blue'
-        ]
-      );
-
-      return {
-        note,
-        event: eventResult.rows[0],
-        classification
-      };
-    }
-
-    return { note, classification };
-  }
-
-  private buildDateTime(date: string, time: string | null): string {
-    if (time) {
-      return `${date}T${time}:00`;
-    }
-    return `${date}T00:00:00`;
-  }
+  const data = await response.json();
+  return JSON.parse(data.choices[0].message.content);
 }
 
-export const notesController = new NotesController();
+app.get('/api/calendar/events', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    
+    let query = 'SELECT * FROM calendar_events WHERE user_id = $1';
+    const params: any[] = ['00000000-0000-0000-0000-000000000001'];
+
+    if (startDate && endDate) {
+      query += ' AND start_datetime BETWEEN $2 AND $3';
+      params.push(startDate, endDate);
+    }
+
+    query += ' ORDER BY start_datetime ASC';
+
+    const result = await db.query(query, params);
+    res.json({ events: result.rows });
+  } catch (error) {
+    console.error('Error fetching events:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/calendar/events/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const userId = '00000000-0000-0000-0000-000000000001';
+    
+    const eventResult = await db.query(
+      'SELECT note_id FROM calendar_events WHERE id = $1 AND user_id = $2',
+      [eventId, userId]
+    );
+
+    if (eventResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    const noteId = eventResult.rows[0].note_id;
+
+    await db.query(
+      'DELETE FROM calendar_events WHERE id = $1 AND user_id = $2',
+      [eventId, userId]
+    );
+
+    if (noteId) {
+      await db.query(
+        'DELETE FROM notes WHERE id = $1 AND user_id = $2',
+        [noteId, userId]
+      );
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting event:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
+  console.log(`🔍 Prueba: http://localhost:${PORT}/api/health`);
+  console.log(`📋 Ver notas: GET http://localhost:${PORT}/api/notes`);
+  console.log(`➕ Crear nota: POST http://localhost:${PORT}/api/notes`);
+});
