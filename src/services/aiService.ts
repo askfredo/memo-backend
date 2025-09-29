@@ -26,17 +26,13 @@ export class AIService {
   async classifyNote(content: string): Promise<ClassificationResult> {
     console.log('🤖 Clasificando nota con IA...');
 
-    // Obtener fecha y hora actual del sistema
     const now = new Date();
-    const currentDate = now.toISOString().split('T')[0]; // YYYY-MM-DD
-    const currentTime = now.toTimeString().split(' ')[0].substring(0, 5); // HH:MM
+    const currentDate = now.toISOString().split('T')[0];
+    const currentTime = now.toTimeString().split(' ')[0].substring(0, 5);
     const dayOfWeek = now.toLocaleDateString('es-ES', { weekday: 'long' });
-    
-    // Calcular fechas futuras para el prompt
     const tomorrow = new Date(now.getTime() + 86400000).toISOString().split('T')[0];
-    const dayAfterTomorrow = new Date(now.getTime() + 172800000).toISOString().split('T')[0];
 
-    console.log(`📅 Contexto de fecha actual: ${currentDate} (${dayOfWeek}) ${currentTime}`);
+    console.log(`📅 Contexto: ${currentDate} (${dayOfWeek}) ${currentTime}`);
 
     try {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -50,106 +46,36 @@ export class AIService {
           messages: [
             {
               role: 'system',
-              content: `Eres un asistente que clasifica y resume notas/eventos de forma creativa y variada.
+              content: `Clasifica notas en español. HOY: ${currentDate} (${dayOfWeek}), hora: ${currentTime}, mañana: ${tomorrow}.
 
-⏰ FECHA Y HORA ACTUAL DEL SISTEMA:
-- HOY es: ${currentDate}
-- Día de la semana: ${dayOfWeek}
-- Hora actual: ${currentTime}
-- MAÑANA será: ${tomorrow}
-- PASADO MAÑANA será: ${dayAfterTomorrow}
+REGLAS:
+1. EMOJI: Elige el MÁS específico. PROHIBIDO: 📅🗓️📝📌📄
+   Ejemplos: cumpleaños→🎉 médico→🥇 comida→🍽️ pago→💰 cine→🎬 gym→🏋️ trabajo→💼 viaje→✈️ estudio→📚 mascota→🐾 misa→⛪ bebida→☕ música→🎵 belleza→💇
 
-⚠️ IMPORTANTE: USA ESTAS FECHAS COMO REFERENCIA para calcular todas las fechas relativas.
+2. RESUMEN: Max 8 palabras, NUNCA copies texto original. Parafrasea.
 
-🎯 REGLAS CRÍTICAS - DEBES SEGUIR ESTRICTAMENTE:
+3. TÍTULO: 3-6 palabras, sin fecha ni hora.
 
-1. EMOJI - VARIEDAD OBLIGATORIA:
-   - PROHIBIDO repetir emojis genéricos como 📅 🗓️ 📝 📌
-   - DEBES elegir el emoji MÁS ESPECÍFICO según el contexto exacto
-   - Analiza las palabras clave y elige el emoji que mejor represente la esencia del evento
-   
-   Ejemplos de emojis ESPECÍFICOS por categoría:
-   * Cumpleaños/Fiestas: 🎉 🎂 🎈 🎊 🥳 🎁 🍰 🎀
-   * Médico/Salud: 🏥 💊 ⚕️ 🩺 💉 🦷 👨‍⚕️ 🔬
-   * Comida/Restaurante: 🍕 🍔 🍜 🍱 🥘 🍝 🍣 🥗 🍽️
-   * Dinero/Compras/Pagos: 💰 💵 💳 🛒 🏷️ 🏦 💸
-   * Películas/Cine/Series: 🎬 🎥 🍿 📺 🎪 🎭 🎞️
-   * Ejercicio/Gym/Deporte: 🏋️ 💪 🏃 ⚽ 🧘 🚴 🏊 ⛹️
-   * Trabajo/Reuniones/Oficina: 💼 📊 🖥️ 📈 👔 💻 🔑
-   * Viajes/Vacaciones: ✈️ 🗺️ 🏖️ 🧳 🚗 🏝️ 🗼 🏔️
-   * Educación/Estudio: 📚 ✏️ 🎓 📖 👨‍🎓 🏫 📝
-   * Mascotas/Veterinario: 🐕 🐈 🐾 🦴 🐶 🐱 🐕‍🦺
-   * Casa/Hogar/Limpieza: 🏠 🧹 🛋️ 🛁 🚪 🪴
-   * Belleza/Peluquería: 💇 💅 💄 ✂️ 🪮
-   * Citas/Romance: 💑 ❤️ 💕 🌹 💍 🥰
-   * Bebidas/Bar/Café: ☕ 🍺 🍷 🥂 🍹 🍵
-   * Música/Conciertos: 🎵 🎸 🎤 🎧 🎹 🥁
-   * Religión/Misa: ⛪ 🙏 ✝️ 📿
-   
-   ⚠️ Si no hay un emoji perfecto, elige el más cercano pero NUNCA uses 📅 🗓️ 📝 📌
+4. HASHTAGS: Específicos temáticos. NO uses #general #nota #imagen
 
-2. RESUMEN - NUNCA TEXTUAL:
-   - PROHIBIDO copiar exactamente lo que dijo el usuario
-   - Genera un resumen DIFERENTE, más corto y claro
-   - Máximo 8-10 palabras
-   - Debe ser descriptivo pero conciso
-   
-   Ejemplos:
-   - Usuario: "mañana tengo cita con el doctor a las 3pm"
-     ❌ MAL: "Cita con el doctor mañana a las 3pm"
-     ✅ BIEN: "Consulta médica" o "Revisión con doctor"
-   
-   - Usuario: "el viernes voy al cumpleaños de Juan"
-     ❌ MAL: "Cumpleaños de Juan el viernes"
-     ✅ BIEN: "Fiesta cumpleaños Juan" o "Celebración Juan"
+5. FECHAS: "hoy"→${currentDate}, "mañana"→${tomorrow}, "el domingo"→próximo domingo, "a las 5pm" (sin día)→${currentDate}
 
-3. TÍTULO DEL EVENTO:
-   - Breve y descriptivo (3-6 palabras)
-   - No incluir la fecha ni hora en el título
-   - Usar el nombre del evento o actividad principal
+6. HORA: Formato 24h. "3pm"→"15:00", "10am"→"10:00"
 
-4. HASHTAGS:
-   - PROHIBIDO usar #general #nota #imagen
-   - SOLO hashtags temáticos específicos
-   - Ejemplos: #cumpleaños #médico #pago #película #gym #trabajo #viaje #misa #religión
-
-5. DETECCIÓN DE FECHAS EN ESPAÑOL:
-   Usa ${currentDate} (${dayOfWeek}) como punto de partida para calcular:
-   - "hoy" = ${currentDate}
-   - "mañana" = ${tomorrow}
-   - "pasado mañana" = ${dayAfterTomorrow}
-   - "el domingo", "el lunes", "el martes", etc = próximo día de la semana desde hoy
-   - "el 15" = día 15 del mes actual (si ya pasó, entonces mes siguiente)
-   - "el 15 de octubre" = fecha específica con año ${now.getFullYear()}
-   - Si solo mencionan hora sin fecha, asumir que es HOY (${currentDate})
-   
-   EJEMPLOS CONCRETOS:
-   - "mañana a las 3pm" → date: "${tomorrow}", time: "15:00"
-   - "pasado mañana 10am" → date: "${dayAfterTomorrow}", time: "10:00"
-   - "a las 5pm" (sin mención de día) → date: "${currentDate}", time: "17:00"
-   - "el domingo a las 10" → calcular próximo domingo desde ${currentDate}
-
-6. FORMATO DE HORA:
-   - Siempre en formato 24 horas HH:MM
-   - "3pm" = "15:00"
-   - "10am" = "10:00"
-   - "mediodía" = "12:00"
-   - "medianoche" = "00:00"
-
-Responde SIEMPRE en este formato JSON:
+JSON:
 {
-  "intent": "calendar_event" | "reminder" | "simple_note",
+  "intent": "calendar_event|reminder|simple_note",
   "entities": {
-    "date": "YYYY-MM-DD o null",
-    "time": "HH:MM o null",
-    "location": "string o null",
+    "date": "YYYY-MM-DD|null",
+    "time": "HH:MM|null",
+    "location": "string|null",
     "participants": ["nombres"],
-    "hashtags": ["#tema1", "#tema2"]
+    "hashtags": ["#tema"]
   },
   "confidence": 0.0-1.0,
-  "suggestedTitle": "título breve del evento sin fecha",
-  "emoji": "emoji único y específico (NUNCA 📅 🗓️ 📝)",
-  "summary": "resumen corto y DIFERENTE al texto original"
+  "suggestedTitle": "título breve",
+  "emoji": "emoji específico",
+  "summary": "resumen corto diferente"
 }`
             },
             {
@@ -158,17 +84,16 @@ Responde SIEMPRE en este formato JSON:
             }
           ],
           response_format: { type: "json_object" },
-          temperature: 0.8
+          temperature: 0.7
         })
       });
 
       const data = await response.json();
       const result = JSON.parse(data.choices[0].message.content);
       
-      // Validación extra: si el emoji es genérico, forzar uno mejor
-      const bannedEmojis = ['📅', '🗓️', '📝', '📌', '📄'];
-      if (bannedEmojis.includes(result.emoji)) {
-        console.warn('⚠️ Emoji genérico detectado, usando fallback');
+      // Validación de emojis prohibidos
+      const banned = ['📅', '🗓️', '📝', '📌', '📄'];
+      if (banned.includes(result.emoji)) {
         result.emoji = this.getFallbackEmoji(content);
       }
       
@@ -195,19 +120,22 @@ Responde SIEMPRE en este formato JSON:
   }
 
   private getFallbackEmoji(content: string): string {
-    const lowerContent = content.toLowerCase();
+    const c = content.toLowerCase();
     
-    if (lowerContent.includes('cumpleaños') || lowerContent.includes('fiesta')) return '🎉';
-    if (lowerContent.includes('doctor') || lowerContent.includes('médico') || lowerContent.includes('salud')) return '🏥';
-    if (lowerContent.includes('comida') || lowerContent.includes('restaurante') || lowerContent.includes('comer')) return '🍽️';
-    if (lowerContent.includes('pagar') || lowerContent.includes('comprar') || lowerContent.includes('dinero')) return '💰';
-    if (lowerContent.includes('película') || lowerContent.includes('cine')) return '🎬';
-    if (lowerContent.includes('gym') || lowerContent.includes('ejercicio') || lowerContent.includes('deporte')) return '🏋️';
-    if (lowerContent.includes('trabajo') || lowerContent.includes('reunión') || lowerContent.includes('junta')) return '💼';
-    if (lowerContent.includes('viaje') || lowerContent.includes('viajar') || lowerContent.includes('vacaciones')) return '✈️';
-    if (lowerContent.includes('estudiar') || lowerContent.includes('clase') || lowerContent.includes('escuela')) return '📚';
-    if (lowerContent.includes('mascota') || lowerContent.includes('perro') || lowerContent.includes('gato')) return '🐾';
-    if (lowerContent.includes('misa') || lowerContent.includes('iglesia') || lowerContent.includes('religión')) return '⛪';
+    if (c.match(/cumpleaños|fiesta|celebr/)) return '🎉';
+    if (c.match(/doctor|médico|hospital|salud|cita médica/)) return '🥇';
+    if (c.match(/comida|restaurante|comer|almuerzo|cena/)) return '🍽️';
+    if (c.match(/pagar|comprar|dinero|banco|cuenta/)) return '💰';
+    if (c.match(/película|cine|serie|netflix/)) return '🎬';
+    if (c.match(/gym|ejercicio|deporte|entrenar/)) return '🏋️';
+    if (c.match(/trabajo|reunión|junta|oficina/)) return '💼';
+    if (c.match(/viaje|viajar|vacaciones|vuelo/)) return '✈️';
+    if (c.match(/estudiar|clase|escuela|universidad/)) return '📚';
+    if (c.match(/mascota|perro|gato|veterinario/)) return '🐾';
+    if (c.match(/misa|iglesia|religión|templo/)) return '⛪';
+    if (c.match(/café|bar|cerveza|copa/)) return '☕';
+    if (c.match(/música|concierto|banda/)) return '🎵';
+    if (c.match(/peluquería|corte|belleza/)) return '💇';
     
     return '💡';
   }
