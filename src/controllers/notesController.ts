@@ -1,27 +1,28 @@
 import { Request, Response } from 'express';
-import { aiService } from '../services/aiService';
 import { db } from '../db';
+import { AIService } from '../services/aiService';
 
 export class NotesController {
+  private aiService: AIService;
+
+  constructor() {
+    this.aiService = new AIService();
+  }
+
   async createNote(req: Request, res: Response) {
     try {
-      const { content, userId } = req.body;
+      const { content, userId = '00000000-0000-0000-0000-000000000001' } = req.body;
 
-      if (!content) {
-        return res.status(400).json({ error: 'Contenido requerido' });
-      }
-
-      console.log('🤖 Clasificando nota con IA...');
-      const classification = await aiService.classifyNote(content);
-      console.log('✅ Clasificación:', classification);
+      const classification = await this.aiService.classifyNote(content);
 
       const noteResult = await db.query(
         `INSERT INTO notes (user_id, content, note_type, hashtags, ai_classification)
-         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
         [
-          userId || '00000000-0000-0000-0000-000000000001',
+          userId,
           content,
-          classification.intent === 'simple_note' ? 'simple' : 'reminder',
+          classification.intent,
           classification.entities.hashtags || [],
           JSON.stringify(classification)
         ]
@@ -29,95 +30,100 @@ export class NotesController {
 
       const note = noteResult.rows[0];
 
-      if (
-        classification.intent === 'calendar_event' || 
-        classification.intent === 'social_event' ||
-        classification.intent === 'reminder'
-      ) {
-        let eventDate = new Date();
-
+      if (classification.intent === 'calendar_event' || classification.intent === 'reminder') {
+        // Construir fecha/hora del evento
+        let startDateTime: Date;
         if (classification.entities.date) {
+          startDateTime = new Date(classification.entities.date);
+          
+          // Si hay hora específica, usarla; si no, es evento all-day (00:00:00)
           if (classification.entities.time) {
-            eventDate = new Date(`${classification.entities.date}T${classification.entities.time}`);
+            const [hours, minutes] = classification.entities.time.split(':');
+            startDateTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
           } else {
-            eventDate = new Date(`${classification.entities.date}T09:00:00`);
+            // Evento all-day: usar 00:00:00
+            startDateTime.setHours(0, 0, 0, 0);
           }
+        } else {
+          // Si no hay fecha, usar mañana por defecto a las 09:00
+          startDateTime = new Date();
+          startDateTime.setDate(startDateTime.getDate() + 1);
+          startDateTime.setHours(9, 0, 0, 0);
         }
 
         const eventResult = await db.query(
-          `INSERT INTO calendar_events (user_id, note_id, title, description, start_datetime, is_social, location)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+          `INSERT INTO calendar_events 
+           (user_id, note_id, title, description, start_datetime, location, is_social)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING *`,
           [
-            userId || '00000000-0000-0000-0000-000000000001',
+            userId,
             note.id,
-            `${classification.emoji || '📝'} ${classification.suggestedTitle || content.substring(0, 100)}`,
+            classification.suggestedTitle,
             content,
-            eventDate,
-            classification.intent === 'social_event',
-            classification.entities.location
+            startDateTime.toISOString(),
+            classification.entities.location || null,
+            (classification.entities.participants?.length || 0) > 0
           ]
         );
 
         return res.json({
-          success: true,
           note,
           event: eventResult.rows[0],
           classification
         });
       }
 
-      return res.json({
-        success: true,
-        note,
-        classification
-      });
-
+      res.json({ note, classification });
     } catch (error) {
-      console.error('Error:', error);
-      return res.status(500).json({ error: 'Error al crear nota' });
+      console.error('Error creating note:', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 
   async getNotes(req: Request, res: Response) {
     try {
+      const userId = '00000000-0000-0000-0000-000000000001';
+      
       const result = await db.query(
-        `SELECT n.* FROM notes n
-         LEFT JOIN calendar_events e ON e.note_id = n.id
-         WHERE e.id IS NULL
-         ORDER BY n.created_at DESC LIMIT 50`
+        `SELECT * FROM notes 
+         WHERE user_id = $1 
+         ORDER BY created_at DESC`,
+        [userId]
       );
+
       res.json({ notes: result.rows });
     } catch (error) {
-      console.error('Error:', error);
-      res.status(500).json({ error: 'Error al obtener notas' });
+      console.error('Error fetching notes:', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 
   async updateNote(req: Request, res: Response) {
     try {
-      const userId = '00000000-0000-0000-0000-000000000001';
       const { noteId } = req.params;
       const { isFavorite, hashtags, content } = req.body;
+      const userId = '00000000-0000-0000-0000-000000000001';
 
       const updates: string[] = [];
-      const params: any[] = [];
+      const values: any[] = [];
       let paramCount = 1;
 
       if (isFavorite !== undefined) {
         updates.push(`is_favorite = $${paramCount}`);
-        params.push(isFavorite);
+        values.push(isFavorite);
         paramCount++;
       }
 
-      if (hashtags) {
+      if (hashtags !== undefined) {
         updates.push(`hashtags = $${paramCount}`);
-        params.push(hashtags);
+        values.push(hashtags);
         paramCount++;
       }
 
-      if (content) {
+      if (content !== undefined) {
         updates.push(`content = $${paramCount}`);
-        params.push(content);
+        values.push(content);
         paramCount++;
       }
 
@@ -125,40 +131,34 @@ export class NotesController {
         return res.status(400).json({ error: 'No updates provided' });
       }
 
-      params.push(noteId, userId);
+      values.push(noteId, userId);
 
-      const query = `
-        UPDATE notes 
-        SET ${updates.join(', ')}
-        WHERE id = $${paramCount} AND user_id = $${paramCount + 1}
-        RETURNING *
-      `;
-
-      const result = await db.query(query, params);
+      const result = await db.query(
+        `UPDATE notes 
+         SET ${updates.join(', ')}
+         WHERE id = $${paramCount} AND user_id = $${paramCount + 1}
+         RETURNING *`,
+        values
+      );
 
       if (result.rows.length === 0) {
         return res.status(404).json({ error: 'Note not found' });
       }
 
-      return res.json({ note: result.rows[0] });
+      res.json({ note: result.rows[0] });
     } catch (error) {
       console.error('Error updating note:', error);
-      return res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 
   async deleteNote(req: Request, res: Response) {
     try {
-      const userId = '00000000-0000-0000-0000-000000000001';
       const { noteId } = req.params;
-
-      await db.query(
-        `DELETE FROM calendar_events WHERE note_id = $1`,
-        [noteId]
-      );
+      const userId = '00000000-0000-0000-0000-000000000001';
 
       const result = await db.query(
-        `DELETE FROM notes WHERE id = $1 AND user_id = $2 RETURNING id`,
+        'DELETE FROM notes WHERE id = $1 AND user_id = $2 RETURNING *',
         [noteId, userId]
       );
 
@@ -166,10 +166,10 @@ export class NotesController {
         return res.status(404).json({ error: 'Note not found' });
       }
 
-      return res.json({ message: 'Note deleted successfully' });
+      res.json({ success: true });
     } catch (error) {
       console.error('Error deleting note:', error);
-      return res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 }
