@@ -87,6 +87,28 @@ app.get('/api/calendar/events', async (req, res) => {
   }
 });
 
+// Eliminar evento
+app.delete('/api/calendar/events/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const userId = '00000000-0000-0000-0000-000000000001';
+    
+    const result = await db.query(
+      'DELETE FROM calendar_events WHERE id = $1 AND user_id = $2 RETURNING *',
+      [eventId, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting event:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
   console.log(`📝 Prueba: http://localhost:${PORT}/api/health`);
