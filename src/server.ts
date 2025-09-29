@@ -87,19 +87,36 @@ app.get('/api/calendar/events', async (req, res) => {
   }
 });
 
-// Eliminar evento
+// Eliminar evento y su nota asociada
 app.delete('/api/calendar/events/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
     const userId = '00000000-0000-0000-0000-000000000001';
     
-    const result = await db.query(
-      'DELETE FROM calendar_events WHERE id = $1 AND user_id = $2 RETURNING *',
+    // Primero obtener el note_id del evento
+    const eventResult = await db.query(
+      'SELECT note_id FROM calendar_events WHERE id = $1 AND user_id = $2',
       [eventId, userId]
     );
 
-    if (result.rows.length === 0) {
+    if (eventResult.rows.length === 0) {
       return res.status(404).json({ error: 'Event not found' });
+    }
+
+    const noteId = eventResult.rows[0].note_id;
+
+    // Eliminar el evento
+    await db.query(
+      'DELETE FROM calendar_events WHERE id = $1 AND user_id = $2',
+      [eventId, userId]
+    );
+
+    // Eliminar la nota asociada si existe
+    if (noteId) {
+      await db.query(
+        'DELETE FROM notes WHERE id = $1 AND user_id = $2',
+        [noteId, userId]
+      );
     }
 
     res.json({ success: true });
