@@ -24,7 +24,7 @@ export class AIService {
   }
 
   async classifyNote(content: string): Promise<ClassificationResult> {
-    console.log('ðŸ¤– Clasificando nota con IA...');
+    console.log('🤖 Clasificando nota con IA...');
 
     try {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -38,33 +38,67 @@ export class AIService {
           messages: [
             {
               role: 'system',
-              content: `Eres un asistente que clasifica y resume notas/eventos. 
+              content: `Eres un asistente que clasifica y resume notas/eventos de forma creativa y variada.
 
-IMPORTANTE:
-- Genera un RESUMEN corto y claro del contenido, NO repitas textualmente lo que dijo el usuario
-- El resumen debe ser conciso (mÃ¡ximo 10 palabras)
-- Para el tÃ­tulo del evento, usa un resumen breve y descriptivo
-- Elige UN emoji relevante y variado segÃºn el contexto:
-  * CumpleaÃ±os/Fiestas: ðŸŽ‰ðŸŽ‚ðŸŽˆðŸŽŠðŸ¥³
-  * MÃ©dico/Salud: ðŸ¥ðŸ’Šâš•ï¸ðŸ©ºðŸ’‰
-  * Comida/Restaurante: ðŸ•ðŸ”ðŸœðŸ±ðŸ¥˜
-  * Dinero/Compras: ðŸ’°ðŸ’µðŸ’³ðŸ›’ðŸ·ï¸
-  * PelÃ­culas/Entretenimiento: ðŸŽ¬ðŸŽ¥ðŸ¿ðŸ“ºðŸŽª
-  * Ejercicio/Gym: ðŸ‹ï¸â€â™‚ï¸ðŸ’ªðŸƒâ€â™‚ï¸âš½ðŸ§˜
-  * Trabajo/Reuniones: ðŸ’¼ðŸ“ŠðŸ–¥ï¸ðŸ“ðŸ‘”
-  * Viajes: âœˆï¸ðŸ—ºï¸ðŸ–ï¸ðŸ§³ðŸš—
-  * EducaciÃ³n: ðŸ“šâœï¸ðŸŽ“ðŸ“–ðŸ‘¨â€ðŸŽ“
-  * Mascotas: ðŸ•ðŸˆðŸ¾ðŸ¦´ðŸ¶
-- Hashtags deben ser temÃ¡ticos y relevantes (#cumpleaÃ±os, #salud, #compras, #pelÃ­cula, #ejercicio, #trabajo, etc.)
-- NUNCA uses hashtags genÃ©ricos como #imagen, #general, #nota
+🎯 REGLAS CRÍTICAS - DEBES SEGUIR ESTRICTAMENTE:
 
-Detecta fechas en espaÃ±ol:
-- "maÃ±ana" = fecha de maÃ±ana
-- "el lunes", "el martes", etc = prÃ³ximo dÃ­a de la semana
-- "el 15" = dÃ­a 15 del mes actual o siguiente
-- "el 15 de octubre" = fecha especÃ­fica
+1. EMOJI - VARIEDAD OBLIGATORIA:
+   - PROHIBIDO repetir emojis genéricos como 📅 🗓️ 📝 📌
+   - DEBES elegir el emoji MÁS ESPECÍFICO según el contexto exacto
+   - Analiza las palabras clave y elige el emoji que mejor represente la esencia del evento
+   
+   Ejemplos de emojis ESPECÍFICOS por categoría:
+   * Cumpleaños/Fiestas: 🎉 🎂 🎈 🎊 🥳 🎁 🍰 🎀
+   * Médico/Salud: 🏥 💊 ⚕️ 🩺 💉 🦷 👨‍⚕️ 🔬
+   * Comida/Restaurante: 🍕 🍔 🍜 🍱 🥘 🍝 🍣 🥗 🍽️
+   * Dinero/Compras/Pagos: 💰 💵 💳 🛒 🏷️ 🏦 💸
+   * Películas/Cine/Series: 🎬 🎥 🍿 📺 🎪 🎭 🎞️
+   * Ejercicio/Gym/Deporte: 🏋️ 💪 🏃 ⚽ 🧘 🚴 🏊 ⛹️
+   * Trabajo/Reuniones/Oficina: 💼 📊 🖥️ 📈 👔 💻 📑
+   * Viajes/Vacaciones: ✈️ 🗺️ 🏖️ 🧳 🚗 🏝️ 🗼 🏔️
+   * Educación/Estudio: 📚 ✏️ 🎓 📖 👨‍🎓 🏫 📝
+   * Mascotas/Veterinario: 🐕 🐈 🐾 🦴 🐶 🐱 🐕‍🦺
+   * Casa/Hogar/Limpieza: 🏠 🧹 🛋️ 🛁 🚪 🪴
+   * Belleza/Peluquería: 💇 💅 💄 ✂️ 🪮
+   * Citas/Romance: 💑 ❤️ 💕 🌹 💐 🥰
+   * Bebidas/Bar/Café: ☕ 🍺 🍷 🥂 🍹 🍵
+   * Música/Conciertos: 🎵 🎸 🎤 🎧 🎹 🥁
+   
+   ⚠️ Si no hay un emoji perfecto, elige el más cercano pero NUNCA uses 📅 🗓️ 📝 📌
 
-Responde en JSON:
+2. RESUMEN - NUNCA TEXTUAL:
+   - PROHIBIDO copiar exactamente lo que dijo el usuario
+   - Genera un resumen DIFERENTE, más corto y claro
+   - Máximo 8-10 palabras
+   - Debe ser descriptivo pero conciso
+   
+   Ejemplos:
+   - Usuario: "mañana tengo cita con el doctor a las 3pm"
+     ❌ MAL: "Cita con el doctor mañana a las 3pm"
+     ✅ BIEN: "Consulta médica" o "Revisión con doctor"
+   
+   - Usuario: "el viernes voy al cumpleaños de Juan"
+     ❌ MAL: "Cumpleaños de Juan el viernes"
+     ✅ BIEN: "Fiesta cumpleaños Juan" o "Celebración Juan"
+
+3. TÍTULO DEL EVENTO:
+   - Breve y descriptivo (3-6 palabras)
+   - No incluir la fecha ni hora en el título
+   - Usar el nombre del evento o actividad principal
+
+4. HASHTAGS:
+   - PROHIBIDO usar #general #nota #imagen
+   - SOLO hashtags temáticos específicos
+   - Ejemplos: #cumpleaños #médico #pago #película #gym #trabajo #viaje
+
+5. DETECCIÓN DE FECHAS EN ESPAÑOL:
+   - "mañana" = fecha de mañana
+   - "pasado mañana" = dentro de 2 días
+   - "el lunes", "el martes", etc = próximo día de la semana
+   - "el 15" = día 15 del mes actual o siguiente
+   - "el 15 de octubre" = fecha específica
+
+Responde SIEMPRE en este formato JSON:
 {
   "intent": "calendar_event" | "reminder" | "simple_note",
   "entities": {
@@ -75,9 +109,9 @@ Responde en JSON:
     "hashtags": ["#tema1", "#tema2"]
   },
   "confidence": 0.0-1.0,
-  "suggestedTitle": "tÃ­tulo breve del evento",
-  "emoji": "emoji Ãºnico y relevante",
-  "summary": "resumen corto en mÃ¡ximo 10 palabras"
+  "suggestedTitle": "título breve del evento sin fecha",
+  "emoji": "emoji único y específico (NUNCA 📅 🗓️ 📝)",
+  "summary": "resumen corto y DIFERENTE al texto original"
 }`
             },
             {
@@ -86,14 +120,21 @@ Responde en JSON:
             }
           ],
           response_format: { type: "json_object" },
-          temperature: 0.7
+          temperature: 0.8
         })
       });
 
       const data = await response.json();
       const result = JSON.parse(data.choices[0].message.content);
       
-      console.log('âœ… ClasificaciÃ³n:', result);
+      // Validación extra: si el emoji es genérico, forzar uno mejor
+      const bannedEmojis = ['📅', '🗓️', '📝', '📌', '📄'];
+      if (bannedEmojis.includes(result.emoji)) {
+        console.warn('⚠️ Emoji genérico detectado, usando fallback');
+        result.emoji = this.getFallbackEmoji(content);
+      }
+      
+      console.log('✅ Clasificación:', result);
       return result;
 
     } catch (error) {
@@ -105,13 +146,30 @@ Responde en JSON:
           time: null,
           location: null,
           participants: [],
-          hashtags: ['#general']
+          hashtags: ['#nota']
         },
         confidence: 0.5,
         suggestedTitle: content.substring(0, 30),
-        emoji: 'ðŸ“',
+        emoji: this.getFallbackEmoji(content),
         summary: content.substring(0, 50)
       };
     }
+  }
+
+  private getFallbackEmoji(content: string): string {
+    const lowerContent = content.toLowerCase();
+    
+    if (lowerContent.includes('cumpleaños') || lowerContent.includes('fiesta')) return '🎉';
+    if (lowerContent.includes('doctor') || lowerContent.includes('médico') || lowerContent.includes('salud')) return '🏥';
+    if (lowerContent.includes('comida') || lowerContent.includes('restaurante') || lowerContent.includes('comer')) return '🍽️';
+    if (lowerContent.includes('pagar') || lowerContent.includes('comprar') || lowerContent.includes('dinero')) return '💰';
+    if (lowerContent.includes('película') || lowerContent.includes('cine')) return '🎬';
+    if (lowerContent.includes('gym') || lowerContent.includes('ejercicio') || lowerContent.includes('deporte')) return '🏋️';
+    if (lowerContent.includes('trabajo') || lowerContent.includes('reunión') || lowerContent.includes('junta')) return '💼';
+    if (lowerContent.includes('viaje') || lowerContent.includes('viajar') || lowerContent.includes('vacaciones')) return '✈️';
+    if (lowerContent.includes('estudiar') || lowerContent.includes('clase') || lowerContent.includes('escuela')) return '📚';
+    if (lowerContent.includes('mascota') || lowerContent.includes('perro') || lowerContent.includes('gato')) return '🐾';
+    
+    return '💡';
   }
 }
