@@ -15,7 +15,6 @@ export class NotesController {
 
       const classification = await this.aiService.classifyNote(content);
 
-      // Guardamos el contenido original en la nota (para no perder información)
       const noteResult = await db.query(
         `INSERT INTO notes (user_id, content, note_type, hashtags, ai_classification)
          VALUES ($1, $2, $3, $4, $5)
@@ -31,7 +30,6 @@ export class NotesController {
 
       const note = noteResult.rows[0];
 
-      // Si es evento o recordatorio, crear entrada en calendario
       if (classification.intent === 'calendar_event' || classification.intent === 'reminder') {
         let startDateTime: Date;
         if (classification.entities.date) {
@@ -49,7 +47,6 @@ export class NotesController {
           startDateTime.setHours(9, 0, 0, 0);
         }
 
-        // CAMBIO IMPORTANTE: Usar summary en lugar de content para la descripción
         const eventResult = await db.query(
           `INSERT INTO calendar_events 
            (user_id, note_id, title, description, start_datetime, location, is_social)
@@ -59,7 +56,7 @@ export class NotesController {
             userId,
             note.id,
             classification.suggestedTitle,
-            classification.summary, // ✅ Ahora usa el resumen generado por IA
+            content,
             startDateTime.toISOString(),
             classification.entities.location || null,
             (classification.entities.participants?.length || 0) > 0
@@ -83,7 +80,6 @@ export class NotesController {
   async processImageNote(extractedText: string, userId: string) {
     const classification = await this.aiService.classifyNote(extractedText);
 
-    // Guardamos el texto extraído original
     const noteResult = await db.query(
       `INSERT INTO notes (user_id, content, note_type, hashtags, ai_classification)
        VALUES ($1, $2, $3, $4, $5)
@@ -109,21 +105,13 @@ export class NotesController {
         startDateTime.setHours(9, 0, 0, 0);
       }
 
-      // CAMBIO IMPORTANTE: Usar summary en lugar de extractedText para la descripción
       const eventResult = await db.query(
         `INSERT INTO calendar_events 
          (user_id, note_id, title, description, start_datetime, location, is_social)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [
-          userId, 
-          note.id, 
-          classification.suggestedTitle, 
-          classification.summary, // ✅ Ahora usa el resumen generado por IA
-          startDateTime.toISOString(), 
-          classification.entities.location || null, 
-          (classification.entities.participants?.length || 0) > 0
-        ]
+        [userId, note.id, classification.suggestedTitle, extractedText, startDateTime.toISOString(), 
+         classification.entities.location || null, (classification.entities.participants?.length || 0) > 0]
       );
 
       return { note, event: eventResult.rows[0], classification };
