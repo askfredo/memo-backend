@@ -71,14 +71,14 @@ app.post('/api/notes/from-image', async (req, res) => {
     const extractedInfo = await analyzeEventImage(imageBase64);
     
     if (extractedInfo.isEvent) {
-      const result = await notesController.processImageNote(extractedInfo.text, userId);
+      const result = await notesController.processImageNote(extractedInfo.text, userId, imageBase64);
       return res.json({ ...result, type: 'event' });
     } else {
       const noteResult = await db.query(
-        `INSERT INTO notes (user_id, content, note_type, hashtags, ai_classification)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO notes (user_id, content, note_type, hashtags, ai_classification, image_data)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *`,
-        [userId, extractedInfo.text, 'simple_note', ['#imagen'], JSON.stringify({ context: 'from_image' })]
+        [userId, extractedInfo.text, 'simple_note', ['#imagen'], JSON.stringify({ context: 'from_image' }), imageBase64]
       );
       return res.json({ note: noteResult.rows[0], type: 'note' });
     }

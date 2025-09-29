@@ -179,14 +179,14 @@ export class NotesController {
     }
   }
 
-  async processImageNote(content: string, userId: string) {
+  async processImageNote(content: string, userId: string, imageData?: string) {
     const classification = await aiService.classifyNote(content);
 
     const noteResult = await db.query(
-      `INSERT INTO notes (user_id, content, note_type, hashtags, ai_classification)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO notes (user_id, content, note_type, hashtags, ai_classification, image_data)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [userId, content, classification.intent, classification.entities.hashtags, JSON.stringify(classification)]
+      [userId, content, classification.intent, classification.entities.hashtags, JSON.stringify(classification), imageData || null]
     );
 
     const note = noteResult.rows[0];
