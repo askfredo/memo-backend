@@ -86,9 +86,13 @@ export class NotesController {
       const userId = '00000000-0000-0000-0000-000000000001';
       
       const result = await db.query(
-        `SELECT * FROM notes 
-         WHERE user_id = $1 
-         ORDER BY created_at DESC`,
+        `SELECT n.* FROM notes n
+         WHERE n.user_id = $1 
+         AND NOT EXISTS (
+           SELECT 1 FROM calendar_events ce 
+           WHERE ce.note_id = n.id
+         )
+         ORDER BY n.created_at DESC`,
         [userId]
       );
 
