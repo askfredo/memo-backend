@@ -48,10 +48,18 @@ export class AIService {
 
       const prompt = `Clasifica notas en español. HOY: ${currentDate} (${dayOfWeek}), hora: ${currentTime}, mañana: ${tomorrow}.
 
-CLASIFICACIÓN DE INTENT (CRÍTICO):
-- "calendar_event": Cuando hay FECHA/HORA específica (ej: "mañana 3pm", "el lunes", "pasado mañana")
-- "reminder": Cuando debe recordarse algo pero SIN fecha/hora específica (ej: "recordar comprar", "no olvidar")
-- "simple_note": Solo notas generales sin fechas ni recordatorios (ej: "idea:", "nota:", observaciones)
+CLASIFICACIÓN DE INTENT (MUY IMPORTANTE):
+- "calendar_event": SI detectas palabras como "mañana", "el lunes", "el martes", "pasado mañana", "hoy", nombres de días, fechas específicas, horas ("3pm", "a las 5", "10am") → SIEMPRE usa "calendar_event"
+- "reminder": Solo cuando dice explícitamente "recordar", "no olvidar" SIN mencionar día ni hora específica
+- "simple_note": Ideas, pensamientos, observaciones SIN referencias temporales
+
+EJEMPLOS CRÍTICOS:
+- "mañana tengo dentista" → intent: "calendar_event", date: "${tomorrow}"
+- "el viernes voy al cine" → intent: "calendar_event", date: (calcular próximo viernes)
+- "hoy a las 5pm reunión" → intent: "calendar_event", date: "${currentDate}", time: "17:00"
+- "pasado mañana cumpleaños Juan" → intent: "calendar_event"
+- "recordar comprar leche" → intent: "reminder", date: null
+- "idea para proyecto" → intent: "simple_note", date: null)
 
 REGLAS:
 1. EMOJI: Elige el MÁS específico. 
