@@ -1,4 +1,6 @@
+
 import dotenv from 'dotenv';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 dotenv.config();
 
 interface ClassificationResult {
@@ -17,10 +19,11 @@ interface ClassificationResult {
 }
 
 export class AIService {
-  private apiKey: string;
+  private genAI: GoogleGenerativeAI;
 
   constructor() {
-    this.apiKey = process.env.OPENAI_API_KEY || '';
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+    this.genAI = new GoogleGenerativeAI(apiKey);
   }
 
   async classifyNote(content: string): Promise<ClassificationResult> {
@@ -35,18 +38,15 @@ export class AIService {
     console.log(`📅 Contexto: ${currentDate} (${dayOfWeek}) ${currentTime}`);
 
     try {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`
+      const model = this.genAI.getGenerativeModel({ 
+        model: 'gemini-2.5-pro',
+        generationConfig: {
+          temperature: 0.7,
+          responseMimeType: 'application/json',
         },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            {
-              role: 'system',
-              content: `Clasifica notas en español. HOY: ${currentDate} (${dayOfWeek}), hora: ${currentTime}, mañana: ${tomorrow}.
+      });
+
+      const prompt = `Clasifica notas en español. HOY: ${currentDate} (${dayOfWeek}), hora: ${currentTime}, mañana: ${tomorrow}.
 
 CLASIFICACIÓN DE INTENT (CRÍTICO):
 - "calendar_event": Cuando hay FECHA/HORA específica (ej: "mañana 3pm", "el lunes", "pasado mañana")
@@ -54,10 +54,10 @@ CLASIFICACIÓN DE INTENT (CRÍTICO):
 - "simple_note": Solo notas generales sin fechas ni recordatorios (ej: "idea:", "nota:", observaciones)
 
 REGLAS:
-1. EMOJI: Elige el MÁS específico. PROHIBIDO: 📅🗓️📝📌📄
+1. EMOJI: Elige el MÁS específico. 
    Ejemplos: cumpleaños→🎉 médico→🥇 comida→🍽️ pago→💰 cine→🎬 gym→🏋️ trabajo→💼 viaje→✈️ estudio→📚 mascota→🐾 misa→⛪ bebida→☕ música→🎵 belleza→💇
 
-2. RESUMEN: Max 8 palabras, NUNCA copies texto original. Parafrasea.
+2. RESUMEN: Max 8 palabras.. Parafrasea.
 
 3. TÍTULO: 3-6 palabras, sin fecha ni hora.
 
@@ -67,13 +67,13 @@ REGLAS:
 
 6. HORA: Formato 24h. "3pm"→"15:00", "10am"→"10:00"
 
-JSON:
+Responde SOLO con JSON en este formato:
 {
   "intent": "calendar_event|reminder|simple_note",
   "entities": {
-    "date": "YYYY-MM-DD|null",
-    "time": "HH:MM|null",
-    "location": "string|null",
+    "date": "YYYY-MM-DD o null",
+    "time": "HH:MM o null",
+    "location": "string o null",
     "participants": ["nombres"],
     "hashtags": ["#tema"]
   },
@@ -81,29 +81,24 @@ JSON:
   "suggestedTitle": "título breve",
   "emoji": "emoji específico",
   "summary": "resumen corto diferente"
-}`
-            },
-            {
-              role: 'user',
-              content: content
-            }
-          ],
-          response_format: { type: "json_object" },
-          temperature: 0.7
-        })
-      });
+}
 
-      const data = await response.json();
-      const result = JSON.parse(data.choices[0].message.content);
+Texto a clasificar: "${content}"`;
+
+      const result = await model.generateContent(prompt);
+      const response = result.response;
+      const text = response.text();
+      
+      const parsed = JSON.parse(text);
       
       // Validación de emojis prohibidos
       const banned = ['📅', '🗓️', '📝', '📌', '📄'];
-      if (banned.includes(result.emoji)) {
-        result.emoji = this.getFallbackEmoji(content);
+      if (banned.includes(parsed.emoji)) {
+        parsed.emoji = this.getFallbackEmoji(content);
       }
       
-      console.log('✅ Clasificación completa:', result);
-      return result;
+      console.log('✅ Clasificación completa:', parsed);
+      return parsed;
 
     } catch (error) {
       console.error('Error clasificando nota:', error);
