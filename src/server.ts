@@ -20,10 +20,10 @@ const initDB = async () => {
     const schema = fs.readFileSync(schemaPath, 'utf8');
     await db.query(schema);
     
-    // Agregar columnas que faltan
     await db.query(`
       ALTER TABLE notes ADD COLUMN IF NOT EXISTS image_data TEXT;
       ALTER TABLE notes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS checklist_data TEXT;
     `);
     
     console.log('✅ Schema ejecutado correctamente');

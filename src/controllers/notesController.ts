@@ -100,7 +100,7 @@ export class NotesController {
   async updateNote(req: Request, res: Response) {
     try {
       const { noteId } = req.params;
-      const { content, isArchived, isFavorite, hashtags } = req.body;
+      const { content, isArchived, isFavorite, hashtags, checklistData } = req.body;
       const userId = '00000000-0000-0000-0000-000000000001';
 
       const updates: string[] = [];
@@ -128,6 +128,12 @@ export class NotesController {
       if (hashtags !== undefined) {
         updates.push(`hashtags = $${paramCount}`);
         values.push(hashtags);
+        paramCount++;
+      }
+
+      if (checklistData !== undefined) {
+        updates.push(`checklist_data = $${paramCount}`);
+        values.push(checklistData);
         paramCount++;
       }
 

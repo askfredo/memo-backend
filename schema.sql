@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS notes (
   is_archived BOOLEAN DEFAULT FALSE,
   ai_classification JSONB,
   image_data TEXT,
+  checklist_data TEXT,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
