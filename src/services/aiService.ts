@@ -1,4 +1,3 @@
-
 import dotenv from 'dotenv';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 dotenv.config();
@@ -16,6 +15,7 @@ interface ClassificationResult {
   suggestedTitle: string;
   emoji: string;
   summary: string;
+  reformattedContent?: string | null;
 }
 
 export class AIService {
@@ -53,23 +53,43 @@ CLASIFICACIÓN DE INTENT (MUY IMPORTANTE):
 - "reminder": Solo cuando dice explícitamente "recordar", "no olvidar" SIN mencionar día ni hora específica
 - "simple_note": Ideas, pensamientos, observaciones SIN referencias temporales
 
+CRÍTICO - REFORMATEAR LISTAS:
+Si el texto contiene múltiples items (separados por comas, espacios, "y", o palabras como "comprar"):
+1. Detecta cada item individual
+2. Agrega un emoji específico para cada item
+3. Formatea con bullet • al inicio de cada línea
+4. Separa cada item con salto de línea (\n)
+5. Devuelve el texto reformateado en el campo "reformattedContent"
+
+Ejemplos de reformateo:
+Input: "comprar pan leche huevo atún"
+Output reformattedContent: "• 🥖 Pan\n• 🥛 Leche\n• 🥚 Huevo\n• 🐟 Atún"
+
+Input: "anota creatina omega 3 y cordones"
+Output reformattedContent: "• 💊 Creatina\n• 🐟 Omega 3\n• 👟 Cordones"
+
+Input: "tareas limpiar cocina lavar ropa sacar perro"
+Output reformattedContent: "• 🧹 Limpiar cocina\n• 👕 Lavar ropa\n• 🐕 Sacar perro"
+
+Si NO es lista (una sola cosa), deja reformattedContent como null.
+
 EJEMPLOS CRÍTICOS:
-- "mañana tengo dentista" → intent: "calendar_event", date: "${tomorrow}"
-- "el viernes voy al cine" → intent: "calendar_event", date: (calcular próximo viernes)
-- "hoy a las 5pm reunión" → intent: "calendar_event", date: "${currentDate}", time: "17:00"
-- "pasado mañana cumpleaños Juan" → intent: "calendar_event"
-- "recordar comprar leche" → intent: "reminder", date: null
-- "idea para proyecto" → intent: "simple_note", date: null)
+- "mañana tengo dentista" → intent: "calendar_event", date: "${tomorrow}", reformattedContent: null
+- "el viernes voy al cine" → intent: "calendar_event", date: (calcular próximo viernes), reformattedContent: null
+- "hoy a las 5pm reunión" → intent: "calendar_event", date: "${currentDate}", time: "17:00", reformattedContent: null
+- "pasado mañana cumpleaños Juan" → intent: "calendar_event", reformattedContent: null
+- "recordar comprar leche" → intent: "reminder", date: null, reformattedContent: null
+- "idea para proyecto" → intent: "simple_note", date: null, reformattedContent: null
 
 REGLAS:
 1. EMOJI: Elige el MÁS específico. 
    Ejemplos: cumpleaños→🎉 médico→🥇 comida→🍽️ pago→💰 cine→🎬 gym→🏋️ trabajo→💼 viaje→✈️ estudio→📚 mascota→🐾 misa→⛪ bebida→☕ música→🎵 belleza→💇
 
-2. RESUMEN: Max 8 palabras.. Parafrasea.
+2. RESUMEN: Max 8 palabras. Parafrasea.
 
 3. TÍTULO: 3-6 palabras, sin fecha ni hora.
 
-4. HASHTAGS: Específicos temáticos. NO uses #general #nota #imagen
+4. HASHTAGS: OBLIGATORIO generar SOLO 1 hashtag. NUNCA más de uno. Ejemplos de hashtags ÚNICOS: #médico #cumpleaños #trabajo #compras #gym #cine
 
 5. FECHAS: "hoy"→${currentDate}, "mañana"→${tomorrow}, "el domingo"→próximo domingo, "a las 5pm" (sin día)→${currentDate}
 
@@ -88,7 +108,8 @@ Responde SOLO con JSON en este formato:
   "confidence": 0.0-1.0,
   "suggestedTitle": "título breve",
   "emoji": "emoji específico",
-  "summary": "resumen corto diferente"
+  "summary": "resumen corto diferente",
+  "reformattedContent": "contenido con bullets y emojis si es lista, o null si no"
 }
 
 Texto a clasificar: "${content}"`;
@@ -103,6 +124,11 @@ Texto a clasificar: "${content}"`;
       const banned = ['📅', '🗓️', '📝', '📌', '📄'];
       if (banned.includes(parsed.emoji)) {
         parsed.emoji = this.getFallbackEmoji(content);
+      }
+
+      // Si hay contenido reformateado, usarlo
+      if (parsed.reformattedContent) {
+        parsed.summary = parsed.reformattedContent;
       }
       
       console.log('✅ Clasificación completa:', parsed);
