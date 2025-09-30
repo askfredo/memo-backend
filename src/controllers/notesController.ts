@@ -18,13 +18,16 @@ export class NotesController {
       const classification = await aiService.classifyNote(content);
       console.log('🎯 Clasificación:', classification);
 
+      // Usar contenido reformateado si existe (para listas)
+      const finalContent = classification.reformattedContent || content;
+
       const noteResult = await db.query(
         `INSERT INTO notes (user_id, content, note_type, hashtags, ai_classification)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING *`,
         [
           userId,
-          content,
+          finalContent,
           classification.intent,
           classification.entities.hashtags,
           JSON.stringify(classification)
@@ -82,6 +85,7 @@ export class NotesController {
     try {
       const userId = req.query.userId || '00000000-0000-0000-0000-000000000001';
       
+      // MODIFICADO: Excluir notas que tienen eventos de calendario asociados
       const result = await db.query(
         `SELECT n.* FROM notes n
          LEFT JOIN calendar_events ce ON ce.note_id = n.id
@@ -100,7 +104,7 @@ export class NotesController {
   async updateNote(req: Request, res: Response) {
     try {
       const { noteId } = req.params;
-      const { content, isArchived, isFavorite, hashtags, checklistData } = req.body;
+      const { content, isArchived, isFavorite } = req.body;
       const userId = '00000000-0000-0000-0000-000000000001';
 
       const updates: string[] = [];
@@ -108,32 +112,20 @@ export class NotesController {
       let paramCount = 1;
 
       if (content !== undefined) {
-        updates.push(`content = $${paramCount}`);
+        updates.push(`content = ${paramCount}`);
         values.push(content);
         paramCount++;
       }
 
       if (isArchived !== undefined) {
-        updates.push(`is_archived = $${paramCount}`);
+        updates.push(`is_archived = ${paramCount}`);
         values.push(isArchived);
         paramCount++;
       }
 
       if (isFavorite !== undefined) {
-        updates.push(`is_favorite = $${paramCount}`);
+        updates.push(`is_favorite = ${paramCount}`);
         values.push(isFavorite);
-        paramCount++;
-      }
-
-      if (hashtags !== undefined) {
-        updates.push(`hashtags = $${paramCount}`);
-        values.push(hashtags);
-        paramCount++;
-      }
-
-      if (checklistData !== undefined) {
-        updates.push(`checklist_data = $${paramCount}`);
-        values.push(checklistData);
         paramCount++;
       }
 
@@ -141,16 +133,12 @@ export class NotesController {
         return res.status(400).json({ error: 'No updates provided' });
       }
 
-      updates.push(`updated_at = NOW()`);
-
       values.push(noteId, userId);
-      const noteIdParam = paramCount;
-      const userIdParam = paramCount + 1;
 
       const result = await db.query(
         `UPDATE notes 
          SET ${updates.join(', ')}
-         WHERE id = $${noteIdParam} AND user_id = $${userIdParam}
+         WHERE id = ${paramCount} AND user_id = ${paramCount + 1}
          RETURNING *`,
         values
       );
@@ -171,11 +159,13 @@ export class NotesController {
       const { noteId } = req.params;
       const userId = '00000000-0000-0000-0000-000000000001';
 
+      // MODIFICADO: Primero eliminar eventos asociados
       await db.query(
         'DELETE FROM calendar_events WHERE note_id = $1 AND user_id = $2',
         [noteId, userId]
       );
 
+      // Luego eliminar la nota
       const result = await db.query(
         'DELETE FROM notes WHERE id = $1 AND user_id = $2 RETURNING *',
         [noteId, userId]
