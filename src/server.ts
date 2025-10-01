@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { notesController } from './controllers/notesController';
+import { passwordVaultController } from './controllers/passwordVaultController';
+import { notificationsController } from './controllers/notificationsController';
 import { db } from './db/index';
 
 dotenv.config();
@@ -19,12 +21,6 @@ const initDB = async () => {
     const schemaPath = path.join(__dirname, '../schema.sql');
     const schema = fs.readFileSync(schemaPath, 'utf8');
     await db.query(schema);
-    
-    await db.query(`
-      ALTER TABLE notes ADD COLUMN IF NOT EXISTS image_data TEXT;
-      ALTER TABLE notes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
-      ALTER TABLE notes ADD COLUMN IF NOT EXISTS checklist_data TEXT;
-    `);
     
     console.log('✅ Schema ejecutado correctamente');
   } catch (error) {
@@ -61,6 +57,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Rutas de Notas
 app.post('/api/notes', notesController.createNote.bind(notesController));
 app.get('/api/notes', notesController.getNotes.bind(notesController));
 app.patch('/api/notes/:noteId', notesController.updateNote.bind(notesController));
@@ -131,6 +128,7 @@ async function analyzeEventImage(imageBase64: string) {
   return JSON.parse(data.choices[0].message.content);
 }
 
+// Rutas de Calendario
 app.get('/api/calendar/events', async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
@@ -188,9 +186,25 @@ app.delete('/api/calendar/events/:eventId', async (req, res) => {
   }
 });
 
+// Rutas de Password Vault
+app.post('/api/vault/passwords', passwordVaultController.createPassword.bind(passwordVaultController));
+app.get('/api/vault/passwords', passwordVaultController.getPasswords.bind(passwordVaultController));
+app.get('/api/vault/passwords/:passwordId', passwordVaultController.getPassword.bind(passwordVaultController));
+app.patch('/api/vault/passwords/:passwordId', passwordVaultController.updatePassword.bind(passwordVaultController));
+app.delete('/api/vault/passwords/:passwordId', passwordVaultController.deletePassword.bind(passwordVaultController));
+
+// Rutas de Notificaciones
+app.post('/api/notifications', notificationsController.createNotification.bind(notificationsController));
+app.get('/api/notifications', notificationsController.getNotifications.bind(notificationsController));
+app.get('/api/notifications/unread-count', notificationsController.getUnreadCount.bind(notificationsController));
+app.patch('/api/notifications/:notificationId/read', notificationsController.markAsRead.bind(notificationsController));
+app.patch('/api/notifications/mark-all-read', notificationsController.markAllAsRead.bind(notificationsController));
+app.delete('/api/notifications/:notificationId', notificationsController.deleteNotification.bind(notificationsController));
+
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
-  console.log(`🔍 Prueba: http://localhost:${PORT}/api/health`);
+  console.log(`🏥 Prueba: http://localhost:${PORT}/api/health`);
   console.log(`📋 Ver notas: GET http://localhost:${PORT}/api/notes`);
-  console.log(`➕ Crear nota: POST http://localhost:${PORT}/api/notes`);
+  console.log(`🔐 Vault: GET http://localhost:${PORT}/api/vault/passwords`);
+  console.log(`🔔 Notificaciones: GET http://localhost:${PORT}/api/notifications`);
 });
