@@ -251,4 +251,4 @@ export class NotesController {
   }
 }
 
-export const notesController = new NotesController();
+export const notificationsController = new NotificationsController();
