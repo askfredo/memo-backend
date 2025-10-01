@@ -68,11 +68,7 @@ Output reformattedContent: "• 🥖 Pan\n• 🥛 Leche\n• 🥚 Huevo\n• �
 Si NO es lista (una sola cosa), deja reformattedContent como null.
 
 EJEMPLOS CRÍTICOS:
-- "mañana tengo dentista" → intent: "calendar_event", date: "${tomorrow}", time: null, reformattedContent: null
-- "el viernes voy al cine" → intent: "calendar_event", date: (calcular próximo viernes), time: null, reformattedContent: null
-- "hoy a las 5pm reunión" → intent: "calendar_event", date: "${currentDate}", time: "17:00", reformattedContent: null
 - "el viernes a las 10am" → intent: "calendar_event", time: "10:00", reformattedContent: null
-- "pasado mañana cumpleaños Juan" → intent: "calendar_event", reformattedContent: null
 - "recordar comprar leche" → intent: "reminder", date: null, reformattedContent: null
 - "idea para proyecto" → intent: "simple_note", date: null, reformattedContent: null
 
