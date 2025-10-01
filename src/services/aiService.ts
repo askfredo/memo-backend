@@ -39,7 +39,7 @@ export class AIService {
 
     try {
       const model = this.genAI.getGenerativeModel({ 
-        model: 'gemini-2.5-flash-lite',
+        model: 'gemini-1.5-pro',
         generationConfig: {
           temperature: 0.7,
           responseMimeType: 'application/json',
@@ -74,9 +74,12 @@ Output reformattedContent: "• 🧹 Limpiar cocina\n• 👕 Lavar ropa\n• �
 Si NO es lista (una sola cosa), deja reformattedContent como null.
 
 EJEMPLOS CRÍTICOS:
-- "mañana tengo dentista" → intent: "calendar_event", date: "${tomorrow}", reformattedContent: null
-- "el viernes voy al cine" → intent: "calendar_event", date: (calcular próximo viernes), reformattedContent: null
+- "mañana tengo dentista" → intent: "calendar_event", date: "${tomorrow}", time: null, reformattedContent: null
+- "el viernes voy al cine" → intent: "calendar_event", date: (calcular próximo viernes), time: null, reformattedContent: null
 - "hoy a las 5pm reunión" → intent: "calendar_event", date: "${currentDate}", time: "17:00", reformattedContent: null
+- "mañana a las 4 de la tarde" → intent: "calendar_event", date: "${tomorrow}", time: "16:00", reformattedContent: null
+- "el viernes a las 10am" → intent: "calendar_event", time: "10:00", reformattedContent: null
+- "hoy a las 3pm reunión" → intent: "calendar_event", date: "${currentDate}", time: "15:00", reformattedContent: null
 - "pasado mañana cumpleaños Juan" → intent: "calendar_event", reformattedContent: null
 - "recordar comprar leche" → intent: "reminder", date: null, reformattedContent: null
 - "idea para proyecto" → intent: "simple_note", date: null, reformattedContent: null
@@ -93,7 +96,23 @@ REGLAS:
 
 5. FECHAS: "hoy"→${currentDate}, "mañana"→${tomorrow}, "el domingo"→próximo domingo, "a las 5pm" (sin día)→${currentDate}
 
-6. HORA: Formato 24h. "3pm"→"15:00", "10am"→"10:00"
+6. HORA: Formato 24h. MUY IMPORTANTE - Conversión correcta:
+   - "1 de la tarde" / "1pm" = "13:00"
+   - "2 de la tarde" / "2pm" = "14:00"
+   - "3 de la tarde" / "3pm" = "15:00"
+   - "4 de la tarde" / "4pm" = "16:00"
+   - "5 de la tarde" / "5pm" = "17:00"
+   - "6 de la tarde" / "6pm" = "18:00"
+   - "7 de la tarde" / "7pm" = "19:00"
+   - "8 de la tarde" / "8pm" = "20:00"
+   - "9 de la tarde" / "9pm" = "21:00"
+   - "10 de la tarde" / "10pm" = "22:00"
+   - "11 de la tarde" / "11pm" = "23:00"
+   - "12 de la tarde" / "mediodía" = "12:00"
+   - "1 de la mañana" / "1am" = "01:00"
+   - "10 de la mañana" / "10am" = "10:00"
+   - "medianoche" = "00:00"
+   REGLA: Si dice "tarde" o "pm" con número 1-11, SUMA 12. Si dice "mañana" o "am", usa el número tal cual.
 
 Responde SOLO con JSON en este formato:
 {
