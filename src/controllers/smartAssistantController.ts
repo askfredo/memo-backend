@@ -18,18 +18,30 @@ class SmartAssistantController {
       console.log('🎤 Voz procesada:', message);
       console.log('📜 Historial:', conversationHistory.length, 'mensajes');
 
+      // Filtrar conversación de últimos 5 minutos (30 mensajes máx)
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+      const recentHistory = conversationHistory
+        .filter((msg: any) => new Date(msg.timestamp) > fiveMinutesAgo)
+        .slice(-30);
+
+      console.log('📜 Mensajes recientes (5 min):', recentHistory.length);
+
       // Detectar intención
       const intent = await this.detectIntent(message);
       console.log('🎯 Intención detectada:', intent);
 
       if (intent === 'question') {
-        // Es una pregunta - responder conversacionalmente CON CONTEXTO
+        // Es una pregunta - responder conversacionalmente
         const context = await this.getUserContext(userId);
-        const aiResponse = await this.generateResponse(message, context, conversationHistory);
+        const aiResponse = await this.generateResponse(message, context, recentHistory);
+        
+        // Decidir si sugerir guardar conversación
+        const shouldOfferSave = this.shouldOfferSaveConversation(recentHistory);
         
         return res.json({
           type: 'conversation',
-          response: aiResponse
+          response: aiResponse,
+          shouldOfferSave
         });
       } else {
         // Es una nota/evento - procesar con el sistema existente
@@ -77,6 +89,19 @@ class SmartAssistantController {
       console.error('❌ Error procesando entrada:', error);
       res.status(500).json({ error: 'Internal server error', details: error.message });
     }
+  }
+
+  private shouldOfferSaveConversation(conversationHistory: any[]): boolean {
+    // Ofrecer guardar después de 8+ mensajes intercambiados
+    if (conversationHistory.length < 8) return false;
+    
+    // No ofrecer si ya se ofreció recientemente (últimos 3 mensajes)
+    const lastThree = conversationHistory.slice(-3);
+    const hasRecentOffer = lastThree.some((msg: any) => 
+      msg.text?.includes('guardar') || msg.text?.includes('conversación')
+    );
+    
+    return !hasRecentOffer;
   }
 
   private async detectIntent(message: string): Promise<'question' | 'action'> {
@@ -174,11 +199,11 @@ Responde SOLO con la palabra: question o action`;
 
       const isPersonalQuestion = /qué|cuál|cuándo|tengo|mis|eventos|tareas|notas|cumpleaños|reunión/i.test(message);
 
-      // Construir historial conversacional (últimos 6 mensajes)
+      // Construir historial conversacional completo (últimos 5 minutos, máx 30 mensajes)
       let conversationContext = '';
       if (conversationHistory.length > 0) {
-        conversationContext = '\n\nHISTORIAL DE LA CONVERSACIÓN:\n';
-        conversationHistory.slice(-6).forEach((msg: any) => {
+        conversationContext = '\n\nHISTORIAL DE LA CONVERSACIÓN (últimos 5 minutos):\n';
+        conversationHistory.forEach((msg: any) => {
           conversationContext += `${msg.type === 'user' ? 'Usuario' : 'Tú'}: ${msg.text}\n`;
         });
         conversationContext += '\n';
