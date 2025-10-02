@@ -1,8 +1,10 @@
 import { Request, Response } from 'express';
 import { db } from '../db/index';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { AIService } from '../services/aiService';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '');
+const aiService = new AIService();
 
 class SmartAssistantController {
   async processVoiceInput(req: Request, res: Response) {
@@ -42,12 +44,12 @@ class SmartAssistantController {
           shouldOfferSave
         });
       } else {
-        // Es una nota/evento - usar el mismo sistema que el endpoint /api/notes
-        console.log('📝 Procesando como acción/nota...');
+        // Es una nota/evento - usar AIService original que funciona bien
+        console.log('📝 Procesando como acción/nota con AIService...');
         
-        // Clasificar con Gemini
-        const classification = await this.classifyWithGemini(message);
-        console.log('📊 Clasificación:', classification);
+        // Usar el mismo sistema que notesController
+        const classification = await aiService.classifyNote(message);
+        console.log('📊 Clasificación:', JSON.stringify(classification, null, 2));
 
         const finalContent = classification.reformattedContent || message;
 
@@ -93,52 +95,9 @@ class SmartAssistantController {
       }
     } catch (error: any) {
       console.error('❌ Error procesando entrada:', error);
+      console.error('Stack:', error.stack);
       res.status(500).json({ error: 'Internal server error', details: error.message });
     }
-  }
-
-  private async classifyWithGemini(message: string) {
-    const model = genAI.getGenerativeModel({ 
-      model: 'gemini-2.5-flash-lite',
-      generationConfig: {
-        temperature: 0.3,
-        responseMimeType: "application/json"
-      }
-    });
-
-    const prompt = `Clasifica esta nota y extrae información estructurada.
-
-Mensaje: "${message}"
-
-Responde en JSON con este formato exacto:
-{
-  "intent": "simple_note" | "calendar_event" | "reminder" | "checklist",
-  "summary": "resumen breve",
-  "suggestedTitle": "título sugerido",
-  "emoji": "emoji apropiado",
-  "reformattedContent": "contenido reformateado",
-  "entities": {
-    "date": "YYYY-MM-DD" (solo si es evento),
-    "time": "HH:MM" (solo si se menciona),
-    "location": "ubicación" (solo si se menciona),
-    "hashtags": ["#tag1", "#tag2"]
-  }
-}
-
-Reglas:
-- Si menciona fecha/hora específica = "calendar_event"
-- Si es lista con viñetas = "checklist"
-- Si menciona "recordar" sin fecha = "reminder"
-- Sino = "simple_note"
-- Incluye emoji relevante
-- Extrae fecha en formato ISO (YYYY-MM-DD)
-- Si dice "mañana", calcula la fecha correcta (hoy es ${new Date().toISOString().split('T')[0]})
-- Si dice "pasado mañana", suma 2 días
-- Hashtags relevantes según el contenido`;
-
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    return JSON.parse(text);
   }
 
   private shouldOfferSaveConversation(conversationHistory: any[]): boolean {
