@@ -102,7 +102,7 @@ class SmartAssistantController {
       model: 'gemini-2.5-flash-lite',
       generationConfig: {
         temperature: 0.3,
-        response_mime_type: "application/json"
+        responseMimeType: "application/json"
       }
     });
 
@@ -279,7 +279,6 @@ Responde SOLO con la palabra: question o action`;
       return `${date}T00:00:00`;
     }
     
-    // Asegurar formato correcto
     const timeParts = time.split(':');
     if (timeParts.length === 2) {
       return `${date}T${time}:00`;
