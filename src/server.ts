@@ -6,6 +6,7 @@ import path from 'path';
 import { notesController } from './controllers/notesController';
 import { passwordVaultController } from './controllers/passwordVaultController';
 import { notificationsController } from './controllers/notificationsController';
+import { aiChatController } from './controllers/aiChatController';
 import { db } from './db/index';
 
 dotenv.config();
@@ -201,10 +202,15 @@ app.patch('/api/notifications/:notificationId/read', notificationsController.mar
 app.patch('/api/notifications/mark-all-read', notificationsController.markAllAsRead.bind(notificationsController));
 app.delete('/api/notifications/:notificationId', notificationsController.deleteNotification.bind(notificationsController));
 
+// Rutas de AI Chat
+app.post('/api/ai/chat', aiChatController.chat.bind(aiChatController));
+app.post('/api/ai/save-conversation', aiChatController.saveConversation.bind(aiChatController));
+
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
   console.log(`🏥 Prueba: http://localhost:${PORT}/api/health`);
   console.log(`📋 Ver notas: GET http://localhost:${PORT}/api/notes`);
   console.log(`🔐 Vault: GET http://localhost:${PORT}/api/vault/passwords`);
   console.log(`🔔 Notificaciones: GET http://localhost:${PORT}/api/notifications`);
+  console.log(`🤖 AI Chat: POST http://localhost:${PORT}/api/ai/chat`);
 });

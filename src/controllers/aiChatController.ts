@@ -13,19 +13,29 @@ class AIChatController {
         return res.status(400).json({ error: 'Message is required' });
       }
 
+      console.log('📨 Mensaje recibido:', message);
+
       // Obtener contexto del usuario
+      console.log('🔍 Obteniendo contexto...');
       const context = await this.getUserContext(userId);
+      console.log('📋 Contexto obtenido:', context.substring(0, 200));
 
       // Generar respuesta con Gemini
+      console.log('🤖 Generando respuesta...');
       const aiResponse = await this.generateResponse(message, context);
+      console.log('✅ Respuesta generada:', aiResponse);
 
       res.json({ 
         response: aiResponse,
         timestamp: new Date().toISOString()
       });
-    } catch (error) {
-      console.error('Error en chat:', error);
-      res.status(500).json({ error: 'Internal server error' });
+    } catch (error: any) {
+      console.error('❌ Error detallado en chat:', error);
+      console.error('Stack:', error.stack);
+      res.status(500).json({ 
+        error: 'Internal server error',
+        details: error.message 
+      });
     }
   }
 
@@ -124,7 +134,7 @@ class AIChatController {
   private async generateResponse(message: string, context: string): Promise<string> {
     try {
       const model = genAI.getGenerativeModel({ 
-        model: 'gemini 2.5-flash-lite',
+        model: 'gemini-1.5-flash',
         generationConfig: {
           temperature: 0.7,
           maxOutputTokens: 500,
@@ -151,7 +161,7 @@ Respuesta:`;
       return response.text();
     } catch (error) {
       console.error('Error generando respuesta:', error);
-      return 'Lo siento, tuve un problema al procesar tu mensaje. ¿Podrías intentarlo de nuevo?';
+      throw error;
     }
   }
 }
