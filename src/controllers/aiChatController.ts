@@ -73,25 +73,25 @@ class AIChatController {
   private async getUserContext(userId: string): Promise<string> {
     try {
       const now = new Date();
-      const weekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const monthFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-      // Obtener eventos de esta semana
+      // Obtener eventos del próximo mes
       const eventsResult = await db.query(
         `SELECT title, description, start_datetime, location 
          FROM calendar_events 
          WHERE user_id = $1 AND start_datetime BETWEEN $2 AND $3
          ORDER BY start_datetime ASC
-         LIMIT 10`,
-        [userId, now.toISOString(), weekFromNow.toISOString()]
+         LIMIT 20`,
+        [userId, now.toISOString(), monthFromNow.toISOString()]
       );
 
-      // Obtener notas recientes (últimas 10)
+      // Obtener notas recientes (últimas 20)
       const notesResult = await db.query(
         `SELECT content, hashtags, created_at 
          FROM notes 
          WHERE user_id = $1 AND NOT hashtags && ARRAY['#secreto']
          ORDER BY created_at DESC
-         LIMIT 10`,
+         LIMIT 20`,
         [userId]
       );
 
@@ -99,17 +99,19 @@ class AIChatController {
       let context = 'INFORMACIÓN DEL USUARIO:\n\n';
 
       if (eventsResult.rows.length > 0) {
-        context += 'EVENTOS PRÓXIMOS:\n';
+        context += 'EVENTOS Y CITAS PRÓXIMOS (30 DÍAS):\n';
         eventsResult.rows.forEach(event => {
-          const date = new Date(event.start_datetime).toLocaleDateString('es-ES', { 
+          const date = new Date(event.start_datetime);
+          const dateStr = date.toLocaleDateString('es-ES', { 
             weekday: 'long', 
             day: 'numeric', 
             month: 'long',
             hour: '2-digit',
             minute: '2-digit'
           });
-          context += `- ${event.title} (${date})`;
+          context += `- ${event.title} (${dateStr})`;
           if (event.location) context += ` en ${event.location}`;
+          if (event.description) context += ` - ${event.description}`;
           context += '\n';
         });
         context += '\n';
@@ -118,8 +120,9 @@ class AIChatController {
       if (notesResult.rows.length > 0) {
         context += 'NOTAS Y TAREAS RECIENTES:\n';
         notesResult.rows.forEach(note => {
-          const preview = note.content.substring(0, 100);
-          context += `- ${preview}${note.content.length > 100 ? '...' : ''}\n`;
+          const content = note.content.substring(0, 150);
+          const hashtags = note.hashtags?.join(' ') || '';
+          context += `- ${content}${note.content.length > 150 ? '...' : ''} ${hashtags}\n`;
         });
         context += '\n';
       }
@@ -136,30 +139,40 @@ class AIChatController {
       const model = genAI.getGenerativeModel({ 
         model: 'gemini-2.5-flash-lite',
         generationConfig: {
-          temperature: 0.8,
+          temperature: 0.7,
           maxOutputTokens: 500,
         }
       });
 
-      // Detectar si la pregunta es específicamente sobre la agenda del usuario
-      const isAgendaRelated = /qué.*eventos?|qué.*tareas?|qué.*pendientes?|mis.*eventos?|mis.*tareas?|tengo.*programado|tengo.*pendiente|mi.*agenda|mi.*calendario|qué.*reuniones?|próximos?.*eventos?|esta.*semana|hoy.*tengo|mañana.*tengo/i.test(message);
+      // Detectar preguntas sobre información personal del usuario
+      const isPersonalQuestion = /qué|cuál|cuáles|cuándo|dónde|quién|quiénes|tengo|mis|mi|próximo|próxima|esta semana|este mes|hoy|mañana|evento|eventos|tarea|tareas|nota|notas|reunión|reuniones|cita|citas|cumpleaños|fiesta|fiestas|actividad|actividades|pendiente|pendientes|programado|agenda|calendario/i.test(message);
 
       let prompt = '';
       
-      if (isAgendaRelated && (context.includes('EVENTOS PRÓXIMOS') || context.includes('NOTAS Y TAREAS'))) {
-        // Pregunta sobre agenda CON información disponible
-        prompt = `Eres MemoVoz, un asistente personal amigable. El usuario pregunta sobre su agenda.
+      if (isPersonalQuestion && context.length > 100) {
+        // Pregunta personal CON contexto disponible
+        prompt = `Eres MemoVoz, un asistente personal inteligente. Analiza el contexto del usuario y responde su pregunta específica.
 
 ${context}
 
-Pregunta: ${message}
+Pregunta del usuario: ${message}
 
-Responde de forma natural y directa (2-3 oraciones) con la información de su agenda. No uses emojis.`;
-      } else if (isAgendaRelated && !context.includes('EVENTOS PRÓXIMOS') && !context.includes('NOTAS Y TAREAS')) {
-        // Pregunta sobre agenda SIN información disponible
-        return "No tienes eventos ni tareas registradas para esta semana. ¿Te gustaría agregar algo?";
+IMPORTANTE:
+- Busca en TODOS los eventos y notas la información relevante
+- Si pregunta por cumpleaños, busca eventos con "cumpleaños" o "cumple" en el título
+- Si pregunta por reuniones, busca eventos con "reunión" o "junta" en el título
+- Si pregunta por tareas, busca en las notas con checklist (•) o palabras como "hacer", "comprar", "pendiente"
+- Si pregunta "quién cumple años", extrae los NOMBRES de los eventos de cumpleaños
+- Responde de forma natural y directa (2-3 oraciones)
+- Si no encuentras información específica, dilo claramente
+- No uses emojis
+
+Respuesta:`;
+      } else if (isPersonalQuestion && context.length <= 100) {
+        // Pregunta personal SIN información
+        return "No tengo información registrada sobre eso en tu agenda o notas. ¿Te gustaría agregar algo?";
       } else {
-        // Conversación general - usa tu conocimiento
+        // Conversación general
         prompt = `Eres MemoVoz, un asistente inteligente y amigable. Responde de forma natural y concisa (2-3 oraciones).
 
 Pregunta: ${message}
