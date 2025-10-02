@@ -31,7 +31,7 @@ class SmartAssistantController {
       console.log('🎯 Intención detectada:', intent);
 
       if (intent === 'question') {
-        // Es una pregunta - responder conversacionalmente
+        // Es una pregunta - responder conversacionalmente CON CONTEXTO
         const context = await this.getUserContext(userId);
         const aiResponse = await this.generateResponse(message, context, recentHistory);
         
@@ -44,13 +44,8 @@ class SmartAssistantController {
           shouldOfferSave
         });
       } else {
-        // Es una nota/evento - usar AIService original que funciona bien
-        console.log('📝 Procesando como acción/nota con AIService...');
-        
-        // Usar el mismo sistema que notesController
+        // Es una nota/evento - procesar con el sistema existente
         const classification = await aiService.classifyNote(message);
-        console.log('📊 Clasificación:', JSON.stringify(classification, null, 2));
-
         const finalContent = classification.reformattedContent || message;
 
         const noteResult = await db.query(
@@ -61,7 +56,6 @@ class SmartAssistantController {
         );
 
         const note = noteResult.rows[0];
-        console.log('✅ Nota creada:', note.id);
 
         // Si es evento, crear en calendario
         if (classification.intent === 'calendar_event' && classification.entities.date) {
@@ -75,11 +69,9 @@ class SmartAssistantController {
             [userId, note.id, titleWithEmoji, classification.summary, startDatetime, classification.entities.location, 'blue']
           );
 
-          console.log('📅 Evento creado:', eventResult.rows[0].id);
-
           return res.json({
             type: 'event_created',
-            response: `Listo, evento creado`,
+            response: `Evento creado: ${titleWithEmoji}`,
             note,
             event: eventResult.rows[0],
             classification
@@ -95,14 +87,15 @@ class SmartAssistantController {
       }
     } catch (error: any) {
       console.error('❌ Error procesando entrada:', error);
-      console.error('Stack:', error.stack);
       res.status(500).json({ error: 'Internal server error', details: error.message });
     }
   }
 
   private shouldOfferSaveConversation(conversationHistory: any[]): boolean {
+    // Ofrecer guardar después de 8+ mensajes intercambiados
     if (conversationHistory.length < 8) return false;
     
+    // No ofrecer si ya se ofreció recientemente (últimos 3 mensajes)
     const lastThree = conversationHistory.slice(-3);
     const hasRecentOffer = lastThree.some((msg: any) => 
       msg.text?.includes('guardar') || msg.text?.includes('conversación')
@@ -123,7 +116,7 @@ class SmartAssistantController {
 
       const prompt = `Analiza este mensaje y determina si es:
 - "question": El usuario hace una pregunta, quiere información, o conversa (ejemplos: "hola", "qué eventos tengo", "quién fue Einstein", "cómo estás", "en esa fecha", "y qué más")
-- "action": El usuario quiere crear una nota, tarea, evento o recordatorio (ejemplos: "recordar comprar pan", "mañana tengo dentista", "anotar pagar celular", "evento el sábado", "comprar leche")
+- "action": El usuario quiere crear una nota, tarea, evento o recordatorio (ejemplos: "recordar comprar pan", "mañana tengo dentista", "anotar pagar celular")
 
 Mensaje: "${message}"
 
@@ -132,12 +125,10 @@ Responde SOLO con la palabra: question o action`;
       const result = await model.generateContent(prompt);
       const response = result.response.text().trim().toLowerCase();
       
-      console.log('🔍 Respuesta de detección:', response);
-      
       return response.includes('action') ? 'action' : 'question';
     } catch (error) {
       console.error('Error detectando intención:', error);
-      return 'question';
+      return 'question'; // Por defecto, asumir pregunta
     }
   }
 
@@ -208,9 +199,10 @@ Responde SOLO con la palabra: question o action`;
 
       const isPersonalQuestion = /qué|cuál|cuándo|tengo|mis|eventos|tareas|notas|cumpleaños|reunión/i.test(message);
 
+      // Construir historial conversacional (últimos mensajes del período de 5 minutos)
       let conversationContext = '';
       if (conversationHistory.length > 0) {
-        conversationContext = '\n\nHISTORIAL DE LA CONVERSACIÓN (últimos 5 minutos):\n';
+        conversationContext = '\n\nHISTORIAL DE LA CONVERSACIÓN:\n';
         conversationHistory.forEach((msg: any) => {
           conversationContext += `${msg.type === 'user' ? 'Usuario' : 'Tú'}: ${msg.text}\n`;
         });
@@ -234,16 +226,7 @@ Responde SOLO con la palabra: question o action`;
   }
 
   private buildDateTime(date: string, time: string | null): string {
-    if (!time) {
-      return `${date}T00:00:00`;
-    }
-    
-    const timeParts = time.split(':');
-    if (timeParts.length === 2) {
-      return `${date}T${time}:00`;
-    }
-    
-    return `${date}T${time}`;
+    return time ? `${date}T${time}:00` : `${date}T00:00:00`;
   }
 }
 
