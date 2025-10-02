@@ -134,27 +134,35 @@ class AIChatController {
   private async generateResponse(message: string, context: string): Promise<string> {
     try {
       const model = genAI.getGenerativeModel({ 
-        model: 'gemini-1.5-flash',
+        model: 'gemini-2.5-flash-lite',
         generationConfig: {
-          temperature: 0.7,
+          temperature: 0.8,
           maxOutputTokens: 500,
         }
       });
 
-      const prompt = `Eres un asistente personal inteligente y amigable. Responde de forma CONCISA y DIRECTA (máximo 2-3 oraciones).
+      // Detectar si la pregunta es sobre agenda/eventos/tareas
+      const isAgendaRelated = /eventos?|tareas?|pendientes?|notas?|calendario|reuniones?|citas?|agenda|tengo|hacer|lista|próximos?|semana|hoy|mañana/i.test(message);
+
+      let prompt = '';
+      
+      if (isAgendaRelated && context.includes('EVENTOS') || context.includes('NOTAS')) {
+        // Usar contexto solo si es relevante y hay información
+        prompt = `Eres un asistente personal amigable llamado MemoVoz. El usuario pregunta sobre su agenda o tareas.
 
 ${context}
 
 Pregunta del usuario: ${message}
 
-Instrucciones:
-- Si el usuario pregunta por eventos, tareas o información personal, usa el contexto provisto
-- Si no tienes la información, dilo claramente
-- Sé amigable pero breve
-- No uses emojis excesivamente
-- Si el contexto está vacío, menciona que no tienes información registrada
+Responde de forma natural, amigable y concisa (2-3 oraciones máximo) usando la información provista. Si no hay información relevante, dilo amablemente.`;
+      } else {
+        // Conversación general sin contexto
+        prompt = `Eres un asistente personal amigable e inteligente llamado MemoVoz. Responde de forma natural, amigable y concisa (2-3 oraciones máximo).
 
-Respuesta:`;
+Pregunta del usuario: ${message}
+
+Responde como un asistente útil que puede hablar de cualquier tema de forma amigable y cercana.`;
+      }
 
       const result = await model.generateContent(prompt);
       const response = result.response;
