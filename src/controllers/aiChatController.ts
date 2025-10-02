@@ -124,7 +124,7 @@ class AIChatController {
   private async generateResponse(message: string, context: string): Promise<string> {
     try {
       const model = genAI.getGenerativeModel({ 
-        model: 'gemini-2.0-flash-exp',
+        model: 'gemini 2.5-flash-lite',
         generationConfig: {
           temperature: 0.7,
           maxOutputTokens: 500,
