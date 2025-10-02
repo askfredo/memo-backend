@@ -7,6 +7,7 @@ import { notesController } from './controllers/notesController';
 import { passwordVaultController } from './controllers/passwordVaultController';
 import { notificationsController } from './controllers/notificationsController';
 import { aiChatController } from './controllers/aiChatController';
+import { smartAssistantController } from './controllers/smartAssistantController';
 import { db } from './db/index';
 
 dotenv.config();
@@ -206,6 +207,9 @@ app.delete('/api/notifications/:notificationId', notificationsController.deleteN
 app.post('/api/ai/chat', aiChatController.chat.bind(aiChatController));
 app.post('/api/ai/save-conversation', aiChatController.saveConversation.bind(aiChatController));
 
+// Ruta de Smart Assistant (Voz inteligente)
+app.post('/api/assistant/process', smartAssistantController.processVoiceInput.bind(smartAssistantController));
+
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
   console.log(`🏥 Prueba: http://localhost:${PORT}/api/health`);
@@ -213,4 +217,5 @@ app.listen(PORT, () => {
   console.log(`🔐 Vault: GET http://localhost:${PORT}/api/vault/passwords`);
   console.log(`🔔 Notificaciones: GET http://localhost:${PORT}/api/notifications`);
   console.log(`🤖 AI Chat: POST http://localhost:${PORT}/api/ai/chat`);
+  console.log(`🎤 Smart Assistant: POST http://localhost:${PORT}/api/assistant/process`);
 });
