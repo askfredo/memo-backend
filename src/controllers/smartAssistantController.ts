@@ -26,6 +26,32 @@ class SmartAssistantController {
 
       console.log('📜 Mensajes recientes (5 min):', recentHistory.length);
 
+      // Detectar si quiere guardar la conversación
+      const wantsToSaveConversation = this.detectSaveConversationIntent(message);
+      
+      if (wantsToSaveConversation && recentHistory.length > 0) {
+        // Guardar toda la conversación
+        const formattedConversation = recentHistory
+          .map((msg: any) => `${msg.type === 'user' ? 'Yo' : 'AI'}: ${msg.text}`)
+          .join('\n\n');
+
+        const title = `Conversación con AI - ${new Date().toLocaleDateString('es-ES')}`;
+        const content = `${title}\n\n${formattedConversation}`;
+
+        const result = await db.query(
+          `INSERT INTO notes (user_id, content, note_type, hashtags, ai_classification)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING *`,
+          [userId, content, 'simple_note', ['#conversacion', '#ai'], JSON.stringify({ type: 'ai_conversation' })]
+        );
+
+        return res.json({
+          type: 'conversation_saved',
+          response: 'Listo, conversación guardada como nota',
+          note: result.rows[0]
+        });
+      }
+
       // Detectar intención
       const intent = await this.detectIntent(message);
       console.log('🎯 Intención detectada:', intent);
@@ -89,6 +115,11 @@ class SmartAssistantController {
       console.error('❌ Error procesando entrada:', error);
       res.status(500).json({ error: 'Internal server error', details: error.message });
     }
+  }
+
+  private detectSaveConversationIntent(message: string): boolean {
+    const savePatterns = /guarda.*conversación|guarda.*esto|guarda.*chat|guarda.*todo|guardar.*conversación|anota.*conversación|salva.*conversación/i;
+    return savePatterns.test(message);
   }
 
   private shouldOfferSaveConversation(conversationHistory: any[]): boolean {
