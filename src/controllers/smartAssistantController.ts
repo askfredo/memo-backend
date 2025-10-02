@@ -9,22 +9,23 @@ const aiService = new AIService();
 class SmartAssistantController {
   async processVoiceInput(req: Request, res: Response) {
     try {
-      const { message, userId = '00000000-0000-0000-0000-000000000001' } = req.body;
+      const { message, conversationHistory = [], userId = '00000000-0000-0000-0000-000000000001' } = req.body;
 
       if (!message || message.trim() === '') {
         return res.status(400).json({ error: 'Message is required' });
       }
 
       console.log('🎤 Voz procesada:', message);
+      console.log('📜 Historial:', conversationHistory.length, 'mensajes');
 
       // Detectar intención
       const intent = await this.detectIntent(message);
       console.log('🎯 Intención detectada:', intent);
 
       if (intent === 'question') {
-        // Es una pregunta - responder conversacionalmente
+        // Es una pregunta - responder conversacionalmente CON CONTEXTO
         const context = await this.getUserContext(userId);
-        const aiResponse = await this.generateResponse(message, context);
+        const aiResponse = await this.generateResponse(message, context, conversationHistory);
         
         return res.json({
           type: 'conversation',
@@ -67,13 +68,13 @@ class SmartAssistantController {
 
         return res.json({
           type: 'note_created',
-          response: `Nota guardada: ${classification.summary}`,
+          response: `Nota guardada`,
           note,
           classification
         });
       }
     } catch (error: any) {
-      console.error('Error procesando entrada:', error);
+      console.error('❌ Error procesando entrada:', error);
       res.status(500).json({ error: 'Internal server error', details: error.message });
     }
   }
@@ -89,7 +90,7 @@ class SmartAssistantController {
       });
 
       const prompt = `Analiza este mensaje y determina si es:
-- "question": El usuario hace una pregunta, quiere información, o conversa (ejemplos: "hola", "qué eventos tengo", "quién fue Einstein", "cómo estás")
+- "question": El usuario hace una pregunta, quiere información, o conversa (ejemplos: "hola", "qué eventos tengo", "quién fue Einstein", "cómo estás", "en esa fecha", "y qué más")
 - "action": El usuario quiere crear una nota, tarea, evento o recordatorio (ejemplos: "recordar comprar pan", "mañana tengo dentista", "anotar pagar celular")
 
 Mensaje: "${message}"
@@ -129,46 +130,74 @@ Responde SOLO con la palabra: question o action`;
         [userId]
       );
 
-      let context = 'INFORMACIÓN:\n\n';
+      let context = 'INFORMACIÓN DEL USUARIO:\n\n';
 
       if (eventsResult.rows.length > 0) {
-        context += 'EVENTOS:\n';
+        context += 'EVENTOS PRÓXIMOS:\n';
         eventsResult.rows.forEach(event => {
           const date = new Date(event.start_datetime).toLocaleDateString('es-ES', { 
-            day: 'numeric', month: 'long'
+            day: 'numeric', 
+            month: 'long',
+            year: 'numeric'
           });
-          context += `- ${event.title} (${date})\n`;
+          context += `- ${event.title} (${date})`;
+          if (event.location) context += ` en ${event.location}`;
+          context += '\n';
         });
         context += '\n';
       }
 
       if (notesResult.rows.length > 0) {
-        context += 'NOTAS:\n';
+        context += 'NOTAS Y TAREAS:\n';
         notesResult.rows.forEach(note => {
           context += `- ${note.content.substring(0, 100)}\n`;
         });
+        context += '\n';
       }
 
       return context;
     } catch (error) {
+      console.error('Error obteniendo contexto:', error);
       return '';
     }
   }
 
-  private async generateResponse(message: string, context: string): Promise<string> {
-    const model = genAI.getGenerativeModel({ 
-      model: 'gemini-2.5-flash-lite',
-      generationConfig: { temperature: 0.7, maxOutputTokens: 300 }
-    });
+  private async generateResponse(message: string, context: string, conversationHistory: any[]): Promise<string> {
+    try {
+      const model = genAI.getGenerativeModel({ 
+        model: 'gemini-2.5-flash-lite',
+        generationConfig: { 
+          temperature: 0.7, 
+          maxOutputTokens: 300 
+        }
+      });
 
-    const isPersonalQuestion = /qué|cuál|cuándo|tengo|mis|eventos|tareas|notas|cumpleaños|reunión/i.test(message);
+      const isPersonalQuestion = /qué|cuál|cuándo|tengo|mis|eventos|tareas|notas|cumpleaños|reunión/i.test(message);
 
-    const prompt = isPersonalQuestion && context.length > 50
-      ? `Eres MemoVoz. Responde brevemente (1-2 oraciones).\n\n${context}\n\nPregunta: ${message}\n\nRespuesta:`
-      : `Eres MemoVoz, asistente amigable. Responde brevemente (1-2 oraciones).\n\nPregunta: ${message}\n\nRespuesta:`;
+      // Construir historial conversacional (últimos 6 mensajes)
+      let conversationContext = '';
+      if (conversationHistory.length > 0) {
+        conversationContext = '\n\nHISTORIAL DE LA CONVERSACIÓN:\n';
+        conversationHistory.slice(-6).forEach((msg: any) => {
+          conversationContext += `${msg.type === 'user' ? 'Usuario' : 'Tú'}: ${msg.text}\n`;
+        });
+        conversationContext += '\n';
+      }
 
-    const result = await model.generateContent(prompt);
-    return result.response.text();
+      let prompt = '';
+      
+      if (isPersonalQuestion && context.length > 50) {
+        prompt = `Eres MemoVoz, asistente personal inteligente. Responde brevemente (1-2 oraciones).${conversationContext}\n${context}\n\nPregunta actual: ${message}\n\nRespuesta:`;
+      } else {
+        prompt = `Eres MemoVoz, asistente amigable e inteligente. Responde brevemente (1-2 oraciones) manteniendo el contexto de la conversación.${conversationContext}\n\nPregunta actual: ${message}\n\nRespuesta:`;
+      }
+
+      const result = await model.generateContent(prompt);
+      return result.response.text();
+    } catch (error) {
+      console.error('Error generando respuesta:', error);
+      throw error;
+    }
   }
 
   private buildDateTime(date: string, time: string | null): string {
