@@ -1,10 +1,8 @@
 import { Request, Response } from 'express';
 import { db } from '../db/index';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { AIService } from '../services/aiService';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '');
-const aiService = new AIService();
 
 class SmartAssistantController {
   async processVoiceInput(req: Request, res: Response) {
@@ -44,8 +42,13 @@ class SmartAssistantController {
           shouldOfferSave
         });
       } else {
-        // Es una nota/evento - procesar con el sistema existente
-        const classification = await aiService.classifyNote(message);
+        // Es una nota/evento - usar el mismo sistema que el endpoint /api/notes
+        console.log('📝 Procesando como acción/nota...');
+        
+        // Clasificar con Gemini
+        const classification = await this.classifyWithGemini(message);
+        console.log('📊 Clasificación:', classification);
+
         const finalContent = classification.reformattedContent || message;
 
         const noteResult = await db.query(
@@ -56,6 +59,7 @@ class SmartAssistantController {
         );
 
         const note = noteResult.rows[0];
+        console.log('✅ Nota creada:', note.id);
 
         // Si es evento, crear en calendario
         if (classification.intent === 'calendar_event' && classification.entities.date) {
@@ -69,9 +73,11 @@ class SmartAssistantController {
             [userId, note.id, titleWithEmoji, classification.summary, startDatetime, classification.entities.location, 'blue']
           );
 
+          console.log('📅 Evento creado:', eventResult.rows[0].id);
+
           return res.json({
             type: 'event_created',
-            response: `Evento creado: ${titleWithEmoji}`,
+            response: `Listo, evento creado`,
             note,
             event: eventResult.rows[0],
             classification
@@ -91,11 +97,53 @@ class SmartAssistantController {
     }
   }
 
+  private async classifyWithGemini(message: string) {
+    const model = genAI.getGenerativeModel({ 
+      model: 'gemini-2.5-flash-lite',
+      generationConfig: {
+        temperature: 0.3,
+        response_mime_type: "application/json"
+      }
+    });
+
+    const prompt = `Clasifica esta nota y extrae información estructurada.
+
+Mensaje: "${message}"
+
+Responde en JSON con este formato exacto:
+{
+  "intent": "simple_note" | "calendar_event" | "reminder" | "checklist",
+  "summary": "resumen breve",
+  "suggestedTitle": "título sugerido",
+  "emoji": "emoji apropiado",
+  "reformattedContent": "contenido reformateado",
+  "entities": {
+    "date": "YYYY-MM-DD" (solo si es evento),
+    "time": "HH:MM" (solo si se menciona),
+    "location": "ubicación" (solo si se menciona),
+    "hashtags": ["#tag1", "#tag2"]
+  }
+}
+
+Reglas:
+- Si menciona fecha/hora específica = "calendar_event"
+- Si es lista con viñetas = "checklist"
+- Si menciona "recordar" sin fecha = "reminder"
+- Sino = "simple_note"
+- Incluye emoji relevante
+- Extrae fecha en formato ISO (YYYY-MM-DD)
+- Si dice "mañana", calcula la fecha correcta (hoy es ${new Date().toISOString().split('T')[0]})
+- Si dice "pasado mañana", suma 2 días
+- Hashtags relevantes según el contenido`;
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    return JSON.parse(text);
+  }
+
   private shouldOfferSaveConversation(conversationHistory: any[]): boolean {
-    // Ofrecer guardar después de 8+ mensajes intercambiados
     if (conversationHistory.length < 8) return false;
     
-    // No ofrecer si ya se ofreció recientemente (últimos 3 mensajes)
     const lastThree = conversationHistory.slice(-3);
     const hasRecentOffer = lastThree.some((msg: any) => 
       msg.text?.includes('guardar') || msg.text?.includes('conversación')
@@ -116,7 +164,7 @@ class SmartAssistantController {
 
       const prompt = `Analiza este mensaje y determina si es:
 - "question": El usuario hace una pregunta, quiere información, o conversa (ejemplos: "hola", "qué eventos tengo", "quién fue Einstein", "cómo estás", "en esa fecha", "y qué más")
-- "action": El usuario quiere crear una nota, tarea, evento o recordatorio (ejemplos: "recordar comprar pan", "mañana tengo dentista", "anotar pagar celular")
+- "action": El usuario quiere crear una nota, tarea, evento o recordatorio (ejemplos: "recordar comprar pan", "mañana tengo dentista", "anotar pagar celular", "evento el sábado", "comprar leche")
 
 Mensaje: "${message}"
 
@@ -125,10 +173,12 @@ Responde SOLO con la palabra: question o action`;
       const result = await model.generateContent(prompt);
       const response = result.response.text().trim().toLowerCase();
       
+      console.log('🔍 Respuesta de detección:', response);
+      
       return response.includes('action') ? 'action' : 'question';
     } catch (error) {
       console.error('Error detectando intención:', error);
-      return 'question'; // Por defecto, asumir pregunta
+      return 'question';
     }
   }
 
@@ -199,7 +249,6 @@ Responde SOLO con la palabra: question o action`;
 
       const isPersonalQuestion = /qué|cuál|cuándo|tengo|mis|eventos|tareas|notas|cumpleaños|reunión/i.test(message);
 
-      // Construir historial conversacional completo (últimos 5 minutos, máx 30 mensajes)
       let conversationContext = '';
       if (conversationHistory.length > 0) {
         conversationContext = '\n\nHISTORIAL DE LA CONVERSACIÓN (últimos 5 minutos):\n';
@@ -226,7 +275,17 @@ Responde SOLO con la palabra: question o action`;
   }
 
   private buildDateTime(date: string, time: string | null): string {
-    return time ? `${date}T${time}:00` : `${date}T00:00:00`;
+    if (!time) {
+      return `${date}T00:00:00`;
+    }
+    
+    // Asegurar formato correcto
+    const timeParts = time.split(':');
+    if (timeParts.length === 2) {
+      return `${date}T${time}:00`;
+    }
+    
+    return `${date}T${time}`;
   }
 }
 
