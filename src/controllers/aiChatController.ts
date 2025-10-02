@@ -141,27 +141,30 @@ class AIChatController {
         }
       });
 
-      // Detectar si la pregunta es sobre agenda/eventos/tareas
-      const isAgendaRelated = /eventos?|tareas?|pendientes?|notas?|calendario|reuniones?|citas?|agenda|tengo|hacer|lista|próximos?|semana|hoy|mañana/i.test(message);
+      // Detectar si la pregunta es específicamente sobre la agenda del usuario
+      const isAgendaRelated = /qué.*eventos?|qué.*tareas?|qué.*pendientes?|mis.*eventos?|mis.*tareas?|tengo.*programado|tengo.*pendiente|mi.*agenda|mi.*calendario|qué.*reuniones?|próximos?.*eventos?|esta.*semana|hoy.*tengo|mañana.*tengo/i.test(message);
 
       let prompt = '';
       
-      if (isAgendaRelated && context.includes('EVENTOS') || context.includes('NOTAS')) {
-        // Usar contexto solo si es relevante y hay información
-        prompt = `Eres un asistente personal amigable llamado MemoVoz. El usuario pregunta sobre su agenda o tareas.
+      if (isAgendaRelated && (context.includes('EVENTOS PRÓXIMOS') || context.includes('NOTAS Y TAREAS'))) {
+        // Pregunta sobre agenda CON información disponible
+        prompt = `Eres MemoVoz, un asistente personal amigable. El usuario pregunta sobre su agenda.
 
 ${context}
 
-Pregunta del usuario: ${message}
+Pregunta: ${message}
 
-Responde de forma natural, amigable y concisa (2-3 oraciones máximo) usando la información provista. Si no hay información relevante, dilo amablemente.`;
+Responde de forma natural y directa (2-3 oraciones) con la información de su agenda. No uses emojis.`;
+      } else if (isAgendaRelated && !context.includes('EVENTOS PRÓXIMOS') && !context.includes('NOTAS Y TAREAS')) {
+        // Pregunta sobre agenda SIN información disponible
+        return "No tienes eventos ni tareas registradas para esta semana. ¿Te gustaría agregar algo?";
       } else {
-        // Conversación general sin contexto
-        prompt = `Eres un asistente personal amigable e inteligente llamado MemoVoz. Responde de forma natural, amigable y concisa (2-3 oraciones máximo).
+        // Conversación general - usa tu conocimiento
+        prompt = `Eres MemoVoz, un asistente inteligente y amigable. Responde de forma natural y concisa (2-3 oraciones).
 
-Pregunta del usuario: ${message}
+Pregunta: ${message}
 
-Responde como un asistente útil que puede hablar de cualquier tema de forma amigable y cercana.`;
+Responde usando tu conocimiento general. Sé útil y conversacional. No uses emojis.`;
       }
 
       const result = await model.generateContent(prompt);
