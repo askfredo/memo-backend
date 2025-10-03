@@ -1,4 +1,3 @@
-// backend/src/controllers/smartAssistantController.ts
 import { Request, Response } from 'express';
 import { db } from '../db/index';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -11,21 +10,18 @@ const aiService = new AIService();
 class SmartAssistantController {
   async processVoiceInput(req: Request, res: Response) {
     try {
-      const { message, conversationHistory = [], userId = '00000000-0000-0000-0000-000000000001', useNativeVoice = true } = req.body;
+      const { message, conversationHistory = [], userId = '00000000-0000-0000-0000-000000000001', useNativeVoice = false } = req.body;
 
       if (!message || message.trim() === '') {
         return res.status(400).json({ error: 'Message is required' });
       }
 
       console.log('🎤 Voz procesada:', message);
-      console.log('📜 Historial:', conversationHistory.length, 'mensajes');
 
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
       const recentHistory = conversationHistory
         .filter((msg: any) => new Date(msg.timestamp) > fiveMinutesAgo)
         .slice(-30);
-
-      console.log('📜 Mensajes recientes (5 min):', recentHistory.length);
 
       const wantsToSaveConversation = this.detectSaveConversationIntent(message);
       
@@ -52,54 +48,28 @@ class SmartAssistantController {
       }
 
       const intent = await this.detectIntent(message);
-      console.log('🎯 Intención detectada:', intent);
+      console.log('🎯 Intención:', intent);
 
       if (intent === 'question') {
         const context = await this.getUserContext(userId);
         
-        // Si useNativeVoice está activado, usar Gemini Live
-        if (useNativeVoice) {
-          try {
-            const contextPrompt = this.buildContextPrompt(message, context, recentHistory);
-            const audioResponse = await geminiLiveService.sendMessage(contextPrompt);
-            
-            const shouldOfferSave = this.shouldOfferSaveConversation(recentHistory);
-            
-            return res.json({
-              type: 'conversation',
-              response: audioResponse.text,
-              audioData: audioResponse.audioData,
-              audioMimeType: audioResponse.mimeType,
-              hasNativeAudio: true,
-              shouldOfferSave
-            });
-          } catch (error) {
-            console.error('Error con voz nativa, usando fallback:', error);
-            // Fallback a texto normal
-            const aiResponse = await this.generateResponse(message, context, recentHistory);
-            const shouldOfferSave = this.shouldOfferSaveConversation(recentHistory);
-            
-            return res.json({
-              type: 'conversation',
-              response: aiResponse,
-              hasNativeAudio: false,
-              shouldOfferSave
-            });
-          }
-        } else {
-          // Usar método tradicional (texto + TTS del navegador)
-          const aiResponse = await this.generateResponse(message, context, recentHistory);
-          const shouldOfferSave = this.shouldOfferSaveConversation(recentHistory);
-          
-          return res.json({
-            type: 'conversation',
-            response: aiResponse,
-            hasNativeAudio: false,
-            shouldOfferSave
-          });
+        // Usar método tradicional (más confiable)
+        const aiResponse = await this.generateResponse(message, context, recentHistory);
+        
+        if (!aiResponse || aiResponse.trim() === '') {
+          throw new Error('Respuesta vacía generada');
         }
+
+        const shouldOfferSave = this.shouldOfferSaveConversation(recentHistory);
+        
+        return res.json({
+          type: 'conversation',
+          response: aiResponse,
+          hasNativeAudio: false,
+          shouldOfferSave
+        });
       } else {
-        // Es una nota/evento - procesar con el sistema existente
+        // Procesar como nota/evento
         const classification = await aiService.classifyNote(message);
         const finalContent = classification.reformattedContent || message;
 
@@ -140,27 +110,11 @@ class SmartAssistantController {
         });
       }
     } catch (error: any) {
-      console.error('❌ Error procesando entrada:', error);
-      res.status(500).json({ error: 'Internal server error', details: error.message });
-    }
-  }
-
-  private buildContextPrompt(message: string, context: string, conversationHistory: any[]): string {
-    const isPersonalQuestion = /qué|cuál|cuándo|tengo|mis|eventos|tareas|notas|cumpleaños|reunión/i.test(message);
-
-    let conversationContext = '';
-    if (conversationHistory.length > 0) {
-      conversationContext = '\n\nHISTORIAL DE LA CONVERSACIÓN:\n';
-      conversationHistory.forEach((msg: any) => {
-        conversationContext += `${msg.type === 'user' ? 'Usuario' : 'Tú'}: ${msg.text}\n`;
+      console.error('❌ Error:', error);
+      res.status(500).json({ 
+        error: 'Internal server error', 
+        details: error.message 
       });
-      conversationContext += '\n';
-    }
-
-    if (isPersonalQuestion && context.length > 50) {
-      return `Eres MemoVoz, asistente personal inteligente. Responde brevemente (1-2 oraciones).${conversationContext}\n${context}\n\nPregunta actual: ${message}\n\nRespuesta:`;
-    } else {
-      return `Eres MemoVoz, asistente amigable e inteligente. Responde brevemente (1-2 oraciones) manteniendo el contexto de la conversación.${conversationContext}\n\nPregunta actual: ${message}\n\nRespuesta:`;
     }
   }
 
@@ -191,8 +145,8 @@ class SmartAssistantController {
       });
 
       const prompt = `Analiza este mensaje y determina si es:
-- "question": El usuario hace una pregunta, quiere información, o conversa (ejemplos: "hola", "qué eventos tengo", "quién fue Einstein", "cómo estás", "en esa fecha", "y qué más")
-- "action": El usuario quiere crear una nota, tarea, evento o recordatorio (ejemplos: "recordar comprar pan", "mañana tengo dentista", "anotar pagar celular")
+- "question": El usuario hace una pregunta, quiere información, o conversa
+- "action": El usuario quiere crear una nota, tarea, evento o recordatorio
 
 Mensaje: "${message}"
 
@@ -231,29 +185,25 @@ Responde SOLO con la palabra: question o action`;
         [userId]
       );
 
-      let context = 'INFORMACIÓN DEL USUARIO:\n\n';
+      let context = 'CONTEXTO DEL USUARIO:\n\n';
 
       if (eventsResult.rows.length > 0) {
         context += 'EVENTOS PRÓXIMOS:\n';
         eventsResult.rows.forEach(event => {
           const date = new Date(event.start_datetime).toLocaleDateString('es-ES', { 
             day: 'numeric', 
-            month: 'long',
-            year: 'numeric'
+            month: 'long'
           });
-          context += `- ${event.title} (${date})`;
-          if (event.location) context += ` en ${event.location}`;
-          context += '\n';
+          context += `- ${event.title} (${date})\n`;
         });
         context += '\n';
       }
 
       if (notesResult.rows.length > 0) {
-        context += 'NOTAS Y TAREAS:\n';
-        notesResult.rows.forEach(note => {
-          context += `- ${note.content.substring(0, 100)}\n`;
+        context += 'NOTAS RECIENTES:\n';
+        notesResult.rows.slice(0, 5).forEach(note => {
+          context += `- ${note.content.substring(0, 80)}\n`;
         });
-        context += '\n';
       }
 
       return context;
@@ -269,34 +219,32 @@ Responde SOLO con la palabra: question o action`;
         model: 'gemini-2.5-flash-lite',
         generationConfig: { 
           temperature: 0.7, 
-          maxOutputTokens: 300 
+          maxOutputTokens: 150
         }
       });
 
-      const isPersonalQuestion = /qué|cuál|cuándo|tengo|mis|eventos|tareas|notas|cumpleaños|reunión/i.test(message);
+      const isPersonalQuestion = /qué|cuál|cuándo|tengo|mis|eventos|tareas|notas|cumpleaños/i.test(message);
 
-      let conversationContext = '';
-      if (conversationHistory.length > 0) {
-        conversationContext = '\n\nHISTORIAL DE LA CONVERSACIÓN:\n';
-        conversationHistory.forEach((msg: any) => {
-          conversationContext += `${msg.type === 'user' ? 'Usuario' : 'Tú'}: ${msg.text}\n`;
-        });
-        conversationContext += '\n';
-      }
-
-      let prompt = '';
+      let prompt = `Eres un asistente personal llamado MemoVoz. Responde de forma natural y conversacional en español, en máximo 2 oraciones cortas.\n\n`;
       
       if (isPersonalQuestion && context.length > 50) {
-        prompt = `Eres MemoVoz, asistente personal inteligente. Responde brevemente (1-2 oraciones).${conversationContext}\n${context}\n\nPregunta actual: ${message}\n\nRespuesta:`;
+        prompt += `${context}\n\nPregunta: ${message}\n\nRespuesta directa y breve:`;
       } else {
-        prompt = `Eres MemoVoz, asistente amigable e inteligente. Responde brevemente (1-2 oraciones) manteniendo el contexto de la conversación.${conversationContext}\n\nPregunta actual: ${message}\n\nRespuesta:`;
+        prompt += `Pregunta: ${message}\n\nRespuesta amigable y breve:`;
       }
 
       const result = await model.generateContent(prompt);
-      return result.response.text();
+      const response = result.response.text().trim();
+      
+      // Validar que no sea una respuesta de debug
+      if (response.includes('**Composing') || response.includes('crafted') || response.length > 300) {
+        return 'Hola, estoy aquí para ayudarte. ¿Qué necesitas?';
+      }
+      
+      return response;
     } catch (error) {
       console.error('Error generando respuesta:', error);
-      throw error;
+      return 'Hola, ¿en qué puedo ayudarte?';
     }
   }
 
