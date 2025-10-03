@@ -16,7 +16,6 @@ class SmartAssistantController {
       }
 
       console.log('🎤 Mensaje:', message);
-      console.log('📚 Historial:', conversationHistory.length, 'mensajes');
 
       const wantsToSaveConversation = this.detectSaveConversationIntent(message);
       
@@ -46,7 +45,7 @@ class SmartAssistantController {
       console.log('🎯 Intención:', intent);
 
       if (intent === 'question') {
-        const context = await this.getUserContext(userId);
+        const context = await this.getUserContext(userId, message);
         const aiResponse = await this.generateResponse(message, context, conversationHistory);
         
         if (!aiResponse || aiResponse.trim() === '') {
@@ -62,6 +61,7 @@ class SmartAssistantController {
           shouldOfferSave
         });
       } else {
+        // Procesar como nota/evento
         const classification = await aiService.classifyNote(message);
         const finalContent = classification.reformattedContent || message;
 
@@ -85,20 +85,41 @@ class SmartAssistantController {
             [userId, note.id, titleWithEmoji, classification.summary, startDatetime, classification.entities.location, 'blue']
           );
 
+          // Generar respuesta verbal natural
+          const eventDate = new Date(startDatetime);
+          const dateStr = eventDate.toLocaleDateString('es-ES', { 
+            weekday: 'long', 
+            day: 'numeric', 
+            month: 'long',
+            hour: classification.entities.time ? '2-digit' : undefined,
+            minute: classification.entities.time ? '2-digit' : undefined
+          });
+
+          const verbalResponse = `Listo, agendé ${titleWithEmoji} para ${dateStr}${classification.entities.location ? ' en ' + classification.entities.location : ''}`;
+
           return res.json({
             type: 'event_created',
-            response: `Evento creado: ${titleWithEmoji}`,
+            response: verbalResponse,
             note,
             event: eventResult.rows[0],
-            classification
+            classification,
+            shouldSpeak: true // Nueva bandera para indicar que debe hablar
           });
         }
 
+        // Respuesta verbal para notas
+        const verbalResponse = classification.intent === 'checklist_note' 
+          ? 'Perfecto, guardé tu lista de tareas'
+          : classification.intent === 'reminder'
+          ? 'Listo, guardé tu recordatorio'
+          : 'Nota guardada correctamente';
+
         return res.json({
           type: 'note_created',
-          response: `Nota guardada`,
+          response: verbalResponse,
           note,
-          classification
+          classification,
+          shouldSpeak: true
         });
       }
     } catch (error: any) {
@@ -137,12 +158,12 @@ class SmartAssistantController {
       });
 
       const prompt = `Analiza este mensaje y determina si es:
-- "question": El usuario hace una pregunta, quiere información, o conversa (ejemplos: "hola", "qué eventos tengo", "cuéntame más", "explícame", "y eso qué es")
-- "action": El usuario quiere crear una nota, tarea, evento o recordatorio (ejemplos: "recordar comprar pan", "mañana tengo dentista", "anotar reunión")
+- "question": El usuario hace una pregunta, quiere información, o conversa
+- "action": El usuario quiere crear una nota, tarea, evento o recordatorio
 
 Mensaje: "${message}"
 
-Responde SOLO con la palabra: question o action`;
+Responde SOLO con: question o action`;
 
       const result = await model.generateContent(prompt);
       const response = result.response.text().trim().toLowerCase();
@@ -154,37 +175,55 @@ Responde SOLO con la palabra: question o action`;
     }
   }
 
-  private async getUserContext(userId: string): Promise<string> {
+  private async getUserContext(userId: string, currentMessage: string): Promise<string> {
     try {
       const now = new Date();
       const monthFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
+      // Obtener TODOS los eventos próximos
       const eventsResult = await db.query(
         `SELECT title, description, start_datetime, location 
          FROM calendar_events 
          WHERE user_id = $1 AND start_datetime BETWEEN $2 AND $3
-         ORDER BY start_datetime ASC
-         LIMIT 20`,
+         ORDER BY start_datetime ASC`,
         [userId, now.toISOString(), monthFromNow.toISOString()]
       );
 
-      const notesResult = await db.query(
-        `SELECT content, hashtags 
-         FROM notes 
-         WHERE user_id = $1 AND NOT hashtags && ARRAY['#secreto']
-         ORDER BY created_at DESC
-         LIMIT 20`,
-        [userId]
-      );
+      // Búsqueda inteligente de notas según palabras clave del mensaje
+      const keywords = this.extractKeywords(currentMessage);
+      
+      let notesQuery = `
+        SELECT content, hashtags, created_at 
+        FROM notes 
+        WHERE user_id = $1 AND NOT hashtags && ARRAY['#secreto']
+      `;
+      
+      const queryParams: any[] = [userId];
+      
+      // Si hay palabras clave, hacer búsqueda por similitud
+      if (keywords.length > 0) {
+        notesQuery += ` AND (`;
+        keywords.forEach((keyword, idx) => {
+          if (idx > 0) notesQuery += ` OR `;
+          notesQuery += `LOWER(content) LIKE $${idx + 2}`;
+          queryParams.push(`%${keyword.toLowerCase()}%`);
+        });
+        notesQuery += `)`;
+      }
+      
+      notesQuery += ` ORDER BY created_at DESC LIMIT 50`;
+
+      const notesResult = await db.query(notesQuery, queryParams);
 
       let context = 'CONTEXTO DEL USUARIO:\n\n';
 
       if (eventsResult.rows.length > 0) {
-        context += 'EVENTOS PRÓXIMOS:\n';
+        context += `EVENTOS PRÓXIMOS (${eventsResult.rows.length} total):\n`;
         eventsResult.rows.forEach(event => {
           const date = new Date(event.start_datetime).toLocaleDateString('es-ES', { 
+            weekday: 'short',
             day: 'numeric', 
-            month: 'long',
+            month: 'short',
             hour: '2-digit',
             minute: '2-digit'
           });
@@ -196,9 +235,11 @@ Responde SOLO con la palabra: question o action`;
       }
 
       if (notesResult.rows.length > 0) {
-        context += 'NOTAS RECIENTES:\n';
-        notesResult.rows.slice(0, 5).forEach(note => {
-          context += `- ${note.content.substring(0, 100)}\n`;
+        context += `NOTAS (${notesResult.rows.length} encontradas):\n`;
+        notesResult.rows.forEach(note => {
+          const preview = note.content.substring(0, 120);
+          const tags = note.hashtags?.join(' ') || '';
+          context += `- ${preview}${note.content.length > 120 ? '...' : ''} ${tags}\n`;
         });
         context += '\n';
       }
@@ -208,6 +249,18 @@ Responde SOLO con la palabra: question o action`;
       console.error('Error obteniendo contexto:', error);
       return '';
     }
+  }
+
+  private extractKeywords(message: string): string[] {
+    // Palabras comunes a ignorar
+    const stopWords = ['el', 'la', 'los', 'las', 'un', 'una', 'de', 'del', 'en', 'y', 'o', 'que', 'qué', 'cuál', 'cuáles', 'mi', 'mis', 'tu', 'tus', 'tengo', 'tienes', 'hay', 'está', 'están', 'a', 'para', 'por'];
+    
+    const words = message.toLowerCase()
+      .replace(/[^\wáéíóúñü\s]/g, '')
+      .split(/\s+/)
+      .filter(word => word.length > 3 && !stopWords.includes(word));
+    
+    return [...new Set(words)]; // Eliminar duplicados
   }
 
   private async generateResponse(message: string, context: string, conversationHistory: any[]): Promise<string> {
@@ -220,26 +273,25 @@ Responde SOLO con la palabra: question o action`;
         }
       });
 
-      const isPersonalQuestion = /qué|cuál|cuándo|dónde|tengo|mis|mi|eventos|tareas|notas|cumpleaños|reunión|cita/i.test(message);
+      const isPersonalQuestion = /qué|cuál|cuándo|dónde|tengo|mis|mi|eventos|tareas|notas|cumpleaños|reunión|cita|lista/i.test(message);
 
-      // Construir historial de conversación
       let conversationContext = '';
       if (conversationHistory.length > 0) {
-        conversationContext = '\n\nHISTORIAL DE LA CONVERSACIÓN (últimos 10 mensajes):\n';
+        conversationContext = '\n\nHISTORIAL RECIENTE:\n';
         conversationHistory.slice(-10).forEach((msg: any) => {
           conversationContext += `${msg.type === 'user' ? 'Usuario' : 'Asistente'}: ${msg.text}\n`;
         });
         conversationContext += '\n';
       }
 
-      let systemPrompt = `Eres MemoVoz, un asistente personal inteligente y conversacional en español.
+      let systemPrompt = `Eres MemoVoz, un asistente personal conversacional en español.
 
 IMPORTANTE:
-- Mantén coherencia con la conversación previa
-- Recuerda lo que el usuario te ha dicho antes
-- Si te preguntan sobre algo que ya mencionaron, referéncialo
-- Responde de forma natural y breve (máximo 2-3 oraciones)
-- Si no tienes información específica del contexto, dilo claramente
+- Responde de forma natural y breve (2-3 oraciones máximo)
+- Mantén coherencia con el historial
+- Cuando te pregunten por eventos, notas o tareas, busca en el CONTEXTO completo
+- Si hay mucha información, resume lo más relevante
+- Si no encuentras algo específico, dilo claramente
 
 ${conversationContext}`;
 
@@ -249,21 +301,20 @@ ${conversationContext}`;
         prompt = `${systemPrompt}
 ${context}
 
-Pregunta actual del usuario: ${message}
+Pregunta: ${message}
 
-Responde de forma directa y conversacional, usando la información del contexto y del historial:`;
+Responde usando TODA la información disponible del contexto:`;
       } else {
         prompt = `${systemPrompt}
 
-Pregunta actual del usuario: ${message}
+Pregunta: ${message}
 
-Responde de forma amigable y conversacional, manteniendo coherencia con el historial:`;
+Responde manteniendo coherencia con el historial:`;
       }
 
       const result = await model.generateContent(prompt);
       const response = result.response.text().trim();
       
-      // Validar respuesta
       if (response.includes('**Composing') || response.includes('crafted') || response.length > 400) {
         return 'Disculpa, ¿puedes reformular tu pregunta?';
       }
