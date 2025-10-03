@@ -9,6 +9,7 @@ import { notificationsController } from './controllers/notificationsController';
 import { aiChatController } from './controllers/aiChatController';
 import { smartAssistantController } from './controllers/smartAssistantController';
 import { db } from './db/index';
+import { audioAssistantController } from './controllers/audioAssistantController';
 
 dotenv.config();
 
@@ -209,6 +210,8 @@ app.post('/api/ai/save-conversation', aiChatController.saveConversation.bind(aiC
 
 // Ruta de Smart Assistant (Voz inteligente)
 app.post('/api/assistant/process', smartAssistantController.processVoiceInput.bind(smartAssistantController));
+
+app.post('/api/assistant/process-audio', audioAssistantController.processVoiceWithAudio.bind(audioAssistantController));
 
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
