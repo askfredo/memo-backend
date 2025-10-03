@@ -1,9 +1,7 @@
-// backend/src/controllers/smartAssistantController.ts
 import { Request, Response } from 'express';
 import { db } from '../db/index';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AIService } from '../services/aiService';
-import { geminiLiveService } from '../services/geminiLiveService';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '');
 const aiService = new AIService();
@@ -11,7 +9,7 @@ const aiService = new AIService();
 class SmartAssistantController {
   async processVoiceInput(req: Request, res: Response) {
     try {
-      const { message, conversationHistory = [], userId = '00000000-0000-0000-0000-000000000001', useNativeVoice = true } = req.body;
+      const { message, conversationHistory = [], userId = '00000000-0000-0000-0000-000000000001' } = req.body;
 
       if (!message || message.trim() === '') {
         return res.status(400).json({ error: 'Message is required' });
@@ -20,6 +18,7 @@ class SmartAssistantController {
       console.log('🎤 Voz procesada:', message);
       console.log('📜 Historial:', conversationHistory.length, 'mensajes');
 
+      // Filtrar conversación de últimos 5 minutos (30 mensajes máx)
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
       const recentHistory = conversationHistory
         .filter((msg: any) => new Date(msg.timestamp) > fiveMinutesAgo)
@@ -27,9 +26,11 @@ class SmartAssistantController {
 
       console.log('📜 Mensajes recientes (5 min):', recentHistory.length);
 
+      // Detectar si quiere guardar la conversación
       const wantsToSaveConversation = this.detectSaveConversationIntent(message);
       
       if (wantsToSaveConversation && recentHistory.length > 0) {
+        // Guardar toda la conversación
         const formattedConversation = recentHistory
           .map((msg: any) => `${msg.type === 'user' ? 'Yo' : 'AI'}: ${msg.text}`)
           .join('\n\n');
@@ -51,53 +52,23 @@ class SmartAssistantController {
         });
       }
 
+      // Detectar intención
       const intent = await this.detectIntent(message);
       console.log('🎯 Intención detectada:', intent);
 
       if (intent === 'question') {
+        // Es una pregunta - responder conversacionalmente CON CONTEXTO
         const context = await this.getUserContext(userId);
+        const aiResponse = await this.generateResponse(message, context, recentHistory);
         
-        // Si useNativeVoice está activado, usar Gemini Live
-        if (useNativeVoice) {
-          try {
-            const contextPrompt = this.buildContextPrompt(message, context, recentHistory);
-            const audioResponse = await geminiLiveService.sendMessage(contextPrompt);
-            
-            const shouldOfferSave = this.shouldOfferSaveConversation(recentHistory);
-            
-            return res.json({
-              type: 'conversation',
-              response: audioResponse.text,
-              audioData: audioResponse.audioData,
-              audioMimeType: audioResponse.mimeType,
-              hasNativeAudio: true,
-              shouldOfferSave
-            });
-          } catch (error) {
-            console.error('Error con voz nativa, usando fallback:', error);
-            // Fallback a texto normal
-            const aiResponse = await this.generateResponse(message, context, recentHistory);
-            const shouldOfferSave = this.shouldOfferSaveConversation(recentHistory);
-            
-            return res.json({
-              type: 'conversation',
-              response: aiResponse,
-              hasNativeAudio: false,
-              shouldOfferSave
-            });
-          }
-        } else {
-          // Usar método tradicional (texto + TTS del navegador)
-          const aiResponse = await this.generateResponse(message, context, recentHistory);
-          const shouldOfferSave = this.shouldOfferSaveConversation(recentHistory);
-          
-          return res.json({
-            type: 'conversation',
-            response: aiResponse,
-            hasNativeAudio: false,
-            shouldOfferSave
-          });
-        }
+        // Decidir si sugerir guardar conversación
+        const shouldOfferSave = this.shouldOfferSaveConversation(recentHistory);
+        
+        return res.json({
+          type: 'conversation',
+          response: aiResponse,
+          shouldOfferSave
+        });
       } else {
         // Es una nota/evento - procesar con el sistema existente
         const classification = await aiService.classifyNote(message);
@@ -112,6 +83,7 @@ class SmartAssistantController {
 
         const note = noteResult.rows[0];
 
+        // Si es evento, crear en calendario
         if (classification.intent === 'calendar_event' && classification.entities.date) {
           const startDatetime = this.buildDateTime(classification.entities.date, classification.entities.time);
           const titleWithEmoji = `${classification.emoji} ${classification.suggestedTitle}`;
@@ -145,33 +117,16 @@ class SmartAssistantController {
     }
   }
 
-  private buildContextPrompt(message: string, context: string, conversationHistory: any[]): string {
-    const isPersonalQuestion = /qué|cuál|cuándo|tengo|mis|eventos|tareas|notas|cumpleaños|reunión/i.test(message);
-
-    let conversationContext = '';
-    if (conversationHistory.length > 0) {
-      conversationContext = '\n\nHISTORIAL DE LA CONVERSACIÓN:\n';
-      conversationHistory.forEach((msg: any) => {
-        conversationContext += `${msg.type === 'user' ? 'Usuario' : 'Tú'}: ${msg.text}\n`;
-      });
-      conversationContext += '\n';
-    }
-
-    if (isPersonalQuestion && context.length > 50) {
-      return `Eres MemoVoz, asistente personal inteligente. Responde brevemente (1-2 oraciones).${conversationContext}\n${context}\n\nPregunta actual: ${message}\n\nRespuesta:`;
-    } else {
-      return `Eres MemoVoz, asistente amigable e inteligente. Responde brevemente (1-2 oraciones) manteniendo el contexto de la conversación.${conversationContext}\n\nPregunta actual: ${message}\n\nRespuesta:`;
-    }
-  }
-
   private detectSaveConversationIntent(message: string): boolean {
     const savePatterns = /guarda.*conversación|guarda.*esto|guarda.*chat|guarda.*todo|guardar.*conversación|anota.*conversación|salva.*conversación/i;
     return savePatterns.test(message);
   }
 
   private shouldOfferSaveConversation(conversationHistory: any[]): boolean {
+    // Ofrecer guardar después de 8+ mensajes intercambiados
     if (conversationHistory.length < 8) return false;
     
+    // No ofrecer si ya se ofreció recientemente (últimos 3 mensajes)
     const lastThree = conversationHistory.slice(-3);
     const hasRecentOffer = lastThree.some((msg: any) => 
       msg.text?.includes('guardar') || msg.text?.includes('conversación')
@@ -204,7 +159,7 @@ Responde SOLO con la palabra: question o action`;
       return response.includes('action') ? 'action' : 'question';
     } catch (error) {
       console.error('Error detectando intención:', error);
-      return 'question';
+      return 'question'; // Por defecto, asumir pregunta
     }
   }
 
@@ -275,6 +230,7 @@ Responde SOLO con la palabra: question o action`;
 
       const isPersonalQuestion = /qué|cuál|cuándo|tengo|mis|eventos|tareas|notas|cumpleaños|reunión/i.test(message);
 
+      // Construir historial conversacional (últimos mensajes del período de 5 minutos)
       let conversationContext = '';
       if (conversationHistory.length > 0) {
         conversationContext = '\n\nHISTORIAL DE LA CONVERSACIÓN:\n';
