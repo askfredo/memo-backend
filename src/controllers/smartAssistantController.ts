@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import { db } from '../db/index';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AIService } from '../services/aiService';
-import { geminiLiveService } from '../services/geminiLiveService';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '');
 const aiService = new AIService();
@@ -16,17 +15,13 @@ class SmartAssistantController {
         return res.status(400).json({ error: 'Message is required' });
       }
 
-      console.log('🎤 Voz procesada:', message);
-
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-      const recentHistory = conversationHistory
-        .filter((msg: any) => new Date(msg.timestamp) > fiveMinutesAgo)
-        .slice(-30);
+      console.log('🎤 Mensaje:', message);
+      console.log('📚 Historial:', conversationHistory.length, 'mensajes');
 
       const wantsToSaveConversation = this.detectSaveConversationIntent(message);
       
-      if (wantsToSaveConversation && recentHistory.length > 0) {
-        const formattedConversation = recentHistory
+      if (wantsToSaveConversation && conversationHistory.length > 0) {
+        const formattedConversation = conversationHistory
           .map((msg: any) => `${msg.type === 'user' ? 'Yo' : 'AI'}: ${msg.text}`)
           .join('\n\n');
 
@@ -52,15 +47,13 @@ class SmartAssistantController {
 
       if (intent === 'question') {
         const context = await this.getUserContext(userId);
-        
-        // Usar método tradicional (más confiable)
-        const aiResponse = await this.generateResponse(message, context, recentHistory);
+        const aiResponse = await this.generateResponse(message, context, conversationHistory);
         
         if (!aiResponse || aiResponse.trim() === '') {
           throw new Error('Respuesta vacía generada');
         }
 
-        const shouldOfferSave = this.shouldOfferSaveConversation(recentHistory);
+        const shouldOfferSave = this.shouldOfferSaveConversation(conversationHistory);
         
         return res.json({
           type: 'conversation',
@@ -69,7 +62,6 @@ class SmartAssistantController {
           shouldOfferSave
         });
       } else {
-        // Procesar como nota/evento
         const classification = await aiService.classifyNote(message);
         const finalContent = classification.reformattedContent || message;
 
@@ -145,8 +137,8 @@ class SmartAssistantController {
       });
 
       const prompt = `Analiza este mensaje y determina si es:
-- "question": El usuario hace una pregunta, quiere información, o conversa
-- "action": El usuario quiere crear una nota, tarea, evento o recordatorio
+- "question": El usuario hace una pregunta, quiere información, o conversa (ejemplos: "hola", "qué eventos tengo", "cuéntame más", "explícame", "y eso qué es")
+- "action": El usuario quiere crear una nota, tarea, evento o recordatorio (ejemplos: "recordar comprar pan", "mañana tengo dentista", "anotar reunión")
 
 Mensaje: "${message}"
 
@@ -192,9 +184,13 @@ Responde SOLO con la palabra: question o action`;
         eventsResult.rows.forEach(event => {
           const date = new Date(event.start_datetime).toLocaleDateString('es-ES', { 
             day: 'numeric', 
-            month: 'long'
+            month: 'long',
+            hour: '2-digit',
+            minute: '2-digit'
           });
-          context += `- ${event.title} (${date})\n`;
+          context += `- ${event.title} (${date})`;
+          if (event.location) context += ` en ${event.location}`;
+          context += '\n';
         });
         context += '\n';
       }
@@ -202,8 +198,9 @@ Responde SOLO con la palabra: question o action`;
       if (notesResult.rows.length > 0) {
         context += 'NOTAS RECIENTES:\n';
         notesResult.rows.slice(0, 5).forEach(note => {
-          context += `- ${note.content.substring(0, 80)}\n`;
+          context += `- ${note.content.substring(0, 100)}\n`;
         });
+        context += '\n';
       }
 
       return context;
@@ -219,26 +216,56 @@ Responde SOLO con la palabra: question o action`;
         model: 'gemini-2.5-flash-lite',
         generationConfig: { 
           temperature: 0.7, 
-          maxOutputTokens: 150
+          maxOutputTokens: 200
         }
       });
 
-      const isPersonalQuestion = /qué|cuál|cuándo|tengo|mis|eventos|tareas|notas|cumpleaños/i.test(message);
+      const isPersonalQuestion = /qué|cuál|cuándo|dónde|tengo|mis|mi|eventos|tareas|notas|cumpleaños|reunión|cita/i.test(message);
 
-      let prompt = `Eres un asistente personal llamado MemoVoz. Responde de forma natural y conversacional en español, en máximo 2 oraciones cortas.\n\n`;
+      // Construir historial de conversación
+      let conversationContext = '';
+      if (conversationHistory.length > 0) {
+        conversationContext = '\n\nHISTORIAL DE LA CONVERSACIÓN (últimos 10 mensajes):\n';
+        conversationHistory.slice(-10).forEach((msg: any) => {
+          conversationContext += `${msg.type === 'user' ? 'Usuario' : 'Asistente'}: ${msg.text}\n`;
+        });
+        conversationContext += '\n';
+      }
+
+      let systemPrompt = `Eres MemoVoz, un asistente personal inteligente y conversacional en español.
+
+IMPORTANTE:
+- Mantén coherencia con la conversación previa
+- Recuerda lo que el usuario te ha dicho antes
+- Si te preguntan sobre algo que ya mencionaron, referéncialo
+- Responde de forma natural y breve (máximo 2-3 oraciones)
+- Si no tienes información específica del contexto, dilo claramente
+
+${conversationContext}`;
+
+      let prompt = '';
       
       if (isPersonalQuestion && context.length > 50) {
-        prompt += `${context}\n\nPregunta: ${message}\n\nRespuesta directa y breve:`;
+        prompt = `${systemPrompt}
+${context}
+
+Pregunta actual del usuario: ${message}
+
+Responde de forma directa y conversacional, usando la información del contexto y del historial:`;
       } else {
-        prompt += `Pregunta: ${message}\n\nRespuesta amigable y breve:`;
+        prompt = `${systemPrompt}
+
+Pregunta actual del usuario: ${message}
+
+Responde de forma amigable y conversacional, manteniendo coherencia con el historial:`;
       }
 
       const result = await model.generateContent(prompt);
       const response = result.response.text().trim();
       
-      // Validar que no sea una respuesta de debug
-      if (response.includes('**Composing') || response.includes('crafted') || response.length > 300) {
-        return 'Hola, estoy aquí para ayudarte. ¿Qué necesitas?';
+      // Validar respuesta
+      if (response.includes('**Composing') || response.includes('crafted') || response.length > 400) {
+        return 'Disculpa, ¿puedes reformular tu pregunta?';
       }
       
       return response;
