@@ -12,12 +12,19 @@ interface WavConversionOptions {
   bitsPerSample: number;
 }
 
+interface StreamCallback {
+  onAudioChunk?: (chunk: string) => void;
+  onTextChunk?: (text: string) => void;
+  onComplete?: () => void;
+}
+
 export class GeminiLiveService {
   private ai: GoogleGenAI;
   private session: Session | undefined;
-  private responseQueue: LiveServerMessage[] = [];
   private audioChunks: string[] = [];
+  private textChunks: string[] = [];
   private currentMimeType: string = '';
+  private streamCallback: StreamCallback | null = null;
 
   constructor() {
     this.ai = new GoogleGenAI({
@@ -69,7 +76,7 @@ REGLAS:
           console.log('Gemini Live session opened');
         },
         onmessage: (message: LiveServerMessage) => {
-          this.responseQueue.push(message);
+          this.handleStreamMessage(message);
         },
         onerror: (e: ErrorEvent) => {
           console.error('Gemini Live error:', e.message);
@@ -82,37 +89,59 @@ REGLAS:
     });
   }
 
-  async sendMessage(text: string): Promise<{ audioData: string, mimeType: string, text: string }> {
-    if (!this.session) {
-      await this.connect();
-    }
-
-    this.audioChunks = [];
-    this.responseQueue = [];
-    this.currentMimeType = '';
-
-    this.session!.sendClientContent({
-      turns: [text]
-    });
-
-    const turn = await this.handleTurn();
-    
-    // Acumular todos los chunks de audio y texto
-    let responseText = '';
-
-    for (const message of turn) {
-      if (message.serverContent?.modelTurn?.parts) {
-        for (const part of message.serverContent.modelTurn.parts) {
-          if (part.inlineData) {
-            this.audioChunks.push(part.inlineData.data || '');
-            this.currentMimeType = part.inlineData.mimeType || '';
+  private handleStreamMessage(message: LiveServerMessage): void {
+    if (message.serverContent?.modelTurn?.parts) {
+      for (const part of message.serverContent.modelTurn.parts) {
+        // Procesar audio inmediatamente
+        if (part.inlineData) {
+          this.audioChunks.push(part.inlineData.data || '');
+          this.currentMimeType = part.inlineData.mimeType || '';
+          
+          // Callback opcional para streaming
+          if (this.streamCallback?.onAudioChunk) {
+            this.streamCallback.onAudioChunk(part.inlineData.data || '');
           }
-          if (part.text) {
-            responseText += part.text;
+        }
+        
+        // Procesar texto inmediatamente
+        if (part.text) {
+          this.textChunks.push(part.text);
+          
+          // Callback opcional para streaming
+          if (this.streamCallback?.onTextChunk) {
+            this.streamCallback.onTextChunk(part.text);
           }
         }
       }
     }
+
+    // Notificar cuando el turno esté completo
+    if (message.serverContent?.turnComplete && this.streamCallback?.onComplete) {
+      this.streamCallback.onComplete();
+    }
+  }
+
+  async sendMessage(
+    text: string, 
+    callback?: StreamCallback
+  ): Promise<{ audioData: string, mimeType: string, text: string }> {
+    if (!this.session) {
+      await this.connect();
+    }
+
+    // Resetear estado
+    this.audioChunks = [];
+    this.textChunks = [];
+    this.currentMimeType = '';
+    this.streamCallback = callback || null;
+
+    // Enviar mensaje
+    this.session!.sendClientContent({
+      turns: [text]
+    });
+
+    // Esperar a que el turno esté completo
+    await this.waitForTurnComplete();
 
     // Convertir todos los chunks acumulados a WAV
     let audioData = '';
@@ -123,35 +152,28 @@ REGLAS:
       audioData = wavBuffer.toString('base64');
     }
 
+    const responseText = this.textChunks.join('');
+
+    // Limpiar callback
+    this.streamCallback = null;
+
     return { audioData, mimeType, text: responseText };
   }
 
-  private async handleTurn(): Promise<LiveServerMessage[]> {
-    const turn: LiveServerMessage[] = [];
-    let done = false;
-    
-    while (!done) {
-      const message = await this.waitMessage();
-      turn.push(message);
-      if (message.serverContent && message.serverContent.turnComplete) {
-        done = true;
-      }
-    }
-    
-    return turn;
-  }
-
-  private async waitMessage(): Promise<LiveServerMessage> {
-    let message: LiveServerMessage | undefined;
-    
-    while (!message) {
-      message = this.responseQueue.shift();
-      if (!message) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-    }
-    
-    return message;
+  private waitForTurnComplete(): Promise<void> {
+    return new Promise((resolve) => {
+      const originalCallback = this.streamCallback;
+      
+      this.streamCallback = {
+        ...originalCallback,
+        onComplete: () => {
+          if (originalCallback?.onComplete) {
+            originalCallback.onComplete();
+          }
+          resolve();
+        }
+      };
+    });
   }
 
   private parseMimeType(mimeType: string): WavConversionOptions {
