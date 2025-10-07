@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { db } from '../db/index';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AIService } from '../services/aiService';
+import { geminiLiveService } from '../services/geminiLiveService'; // ✅ NUEVO IMPORT
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '');
 const aiService = new AIService();
@@ -16,6 +17,7 @@ class SmartAssistantController {
       }
 
       console.log('🎤 Mensaje:', message);
+      console.log('🔊 useNativeVoice:', useNativeVoice);
 
       const wantsToSaveConversation = this.detectSaveConversationIntent(message);
       
@@ -33,6 +35,18 @@ class SmartAssistantController {
            RETURNING *`,
           [userId, content, 'simple_note', ['#conversacion', '#ai'], JSON.stringify({ type: 'ai_conversation' })]
         );
+
+        // ✅ CON AUDIO DE GEMINI
+        if (useNativeVoice) {
+          const voiceResponse = await geminiLiveService.sendMessage('Listo, conversación guardada como nota');
+          return res.json({
+            type: 'conversation_saved',
+            response: voiceResponse.text || 'Listo, conversación guardada como nota',
+            audioData: voiceResponse.audioData,
+            mimeType: voiceResponse.mimeType,
+            note: result.rows[0]
+          });
+        }
 
         return res.json({
           type: 'conversation_saved',
@@ -54,10 +68,29 @@ class SmartAssistantController {
 
         const shouldOfferSave = this.shouldOfferSaveConversation(conversationHistory);
         
+        // ✅ USAR GEMINI LIVE PARA VOZ NATIVA
+        if (useNativeVoice) {
+          console.log('🎵 Generando audio con Gemini Live...');
+          const voiceResponse = await geminiLiveService.sendMessage(aiResponse);
+          
+          console.log('✅ Audio generado:', {
+            audioLength: voiceResponse.audioData.length,
+            mimeType: voiceResponse.mimeType,
+            textLength: voiceResponse.text.length
+          });
+
+          return res.json({
+            type: 'conversation',
+            response: aiResponse,
+            audioData: voiceResponse.audioData,
+            mimeType: voiceResponse.mimeType,
+            shouldOfferSave
+          });
+        }
+
         return res.json({
           type: 'conversation',
           response: aiResponse,
-          hasNativeAudio: false,
           shouldOfferSave
         });
       } else {
@@ -97,13 +130,26 @@ class SmartAssistantController {
 
           const verbalResponse = `Listo, agendé ${titleWithEmoji} para ${dateStr}${classification.entities.location ? ' en ' + classification.entities.location : ''}`;
 
+          // ✅ CON AUDIO DE GEMINI
+          if (useNativeVoice) {
+            const voiceResponse = await geminiLiveService.sendMessage(verbalResponse);
+            return res.json({
+              type: 'event_created',
+              response: verbalResponse,
+              audioData: voiceResponse.audioData,
+              mimeType: voiceResponse.mimeType,
+              note,
+              event: eventResult.rows[0],
+              classification
+            });
+          }
+
           return res.json({
             type: 'event_created',
             response: verbalResponse,
             note,
             event: eventResult.rows[0],
-            classification,
-            shouldSpeak: true // Nueva bandera para indicar que debe hablar
+            classification
           });
         }
 
@@ -114,12 +160,24 @@ class SmartAssistantController {
           ? 'Listo, guardé tu recordatorio'
           : 'Nota guardada correctamente';
 
+        // ✅ CON AUDIO DE GEMINI
+        if (useNativeVoice) {
+          const voiceResponse = await geminiLiveService.sendMessage(verbalResponse);
+          return res.json({
+            type: 'note_created',
+            response: verbalResponse,
+            audioData: voiceResponse.audioData,
+            mimeType: voiceResponse.mimeType,
+            note,
+            classification
+          });
+        }
+
         return res.json({
           type: 'note_created',
           response: verbalResponse,
           note,
-          classification,
-          shouldSpeak: true
+          classification
         });
       }
     } catch (error: any) {
@@ -180,7 +238,6 @@ Responde SOLO con: question o action`;
       const now = new Date();
       const monthFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-      // Obtener TODOS los eventos próximos
       const eventsResult = await db.query(
         `SELECT title, description, start_datetime, location 
          FROM calendar_events 
@@ -189,7 +246,6 @@ Responde SOLO con: question o action`;
         [userId, now.toISOString(), monthFromNow.toISOString()]
       );
 
-      // Búsqueda inteligente de notas según palabras clave del mensaje
       const keywords = this.extractKeywords(currentMessage);
       
       let notesQuery = `
@@ -200,7 +256,6 @@ Responde SOLO con: question o action`;
       
       const queryParams: any[] = [userId];
       
-      // Si hay palabras clave, hacer búsqueda por similitud
       if (keywords.length > 0) {
         notesQuery += ` AND (`;
         keywords.forEach((keyword, idx) => {
@@ -252,7 +307,6 @@ Responde SOLO con: question o action`;
   }
 
   private extractKeywords(message: string): string[] {
-    // Palabras comunes a ignorar
     const stopWords = ['el', 'la', 'los', 'las', 'un', 'una', 'de', 'del', 'en', 'y', 'o', 'que', 'qué', 'cuál', 'cuáles', 'mi', 'mis', 'tu', 'tus', 'tengo', 'tienes', 'hay', 'está', 'están', 'a', 'para', 'por'];
     
     const words = message.toLowerCase()
@@ -260,7 +314,7 @@ Responde SOLO con: question o action`;
       .split(/\s+/)
       .filter(word => word.length > 3 && !stopWords.includes(word));
     
-    return [...new Set(words)]; // Eliminar duplicados
+    return [...new Set(words)];
   }
 
   private async generateResponse(message: string, context: string, conversationHistory: any[]): Promise<string> {
