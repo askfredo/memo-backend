@@ -13,7 +13,7 @@ interface WavConversionOptions {
 }
 
 interface StreamCallback {
-  onAudioChunk?: (chunk: string) => void;
+  onAudioChunk?: (chunk: string) => void; // Base64 WAV chunk
   onTextChunk?: (text: string) => void;
   onComplete?: () => void;
 }
@@ -25,6 +25,8 @@ export class GeminiLiveService {
   private textChunks: string[] = [];
   private currentMimeType: string = '';
   private streamCallback: StreamCallback | null = null;
+  private wavOptions: WavConversionOptions | null = null;
+  private headerSent: boolean = false;
 
   constructor() {
     this.ai = new GoogleGenAI({
@@ -92,14 +94,17 @@ REGLAS:
   private handleStreamMessage(message: LiveServerMessage): void {
     if (message.serverContent?.modelTurn?.parts) {
       for (const part of message.serverContent.modelTurn.parts) {
-        // Procesar audio inmediatamente
+        // Procesar audio inmediatamente en streaming
         if (part.inlineData) {
-          this.audioChunks.push(part.inlineData.data || '');
+          const rawData = part.inlineData.data || '';
           this.currentMimeType = part.inlineData.mimeType || '';
           
-          // Callback opcional para streaming
-          if (this.streamCallback?.onAudioChunk) {
-            this.streamCallback.onAudioChunk(part.inlineData.data || '');
+          // Almacenar para la respuesta final
+          this.audioChunks.push(rawData);
+
+          // STREAMING: Enviar chunk inmediatamente convertido a WAV
+          if (this.streamCallback?.onAudioChunk && rawData) {
+            this.streamAudioChunk(rawData);
           }
         }
         
@@ -107,7 +112,6 @@ REGLAS:
         if (part.text) {
           this.textChunks.push(part.text);
           
-          // Callback opcional para streaming
           if (this.streamCallback?.onTextChunk) {
             this.streamCallback.onTextChunk(part.text);
           }
@@ -118,6 +122,35 @@ REGLAS:
     // Notificar cuando el turno esté completo
     if (message.serverContent?.turnComplete && this.streamCallback?.onComplete) {
       this.streamCallback.onComplete();
+      this.headerSent = false; // Reset para el próximo mensaje
+    }
+  }
+
+  private streamAudioChunk(rawData: string): void {
+    if (!this.streamCallback?.onAudioChunk) return;
+
+    // Parsear opciones WAV solo la primera vez
+    if (!this.wavOptions && this.currentMimeType) {
+      this.wavOptions = this.parseMimeType(this.currentMimeType);
+    }
+
+    if (!this.wavOptions) return;
+
+    // Convertir el chunk individual a buffer
+    const chunkBuffer = Buffer.from(rawData, 'base64');
+
+    // En el PRIMER chunk, incluir el header WAV
+    if (!this.headerSent) {
+      // Nota: El header tiene un tamaño de datos estimado
+      // Para streaming perfecto, usarías un tamaño grande o
+      // crearías un header con tamaño indefinido (0xFFFFFFFF)
+      const wavHeader = this.createWavHeader(0xFFFFFFFF - 36, this.wavOptions);
+      const firstChunk = Buffer.concat([wavHeader, chunkBuffer]);
+      this.streamCallback.onAudioChunk(firstChunk.toString('base64'));
+      this.headerSent = true;
+    } else {
+      // Chunks subsiguientes: solo los datos PCM
+      this.streamCallback.onAudioChunk(chunkBuffer.toString('base64'));
     }
   }
 
@@ -134,6 +167,8 @@ REGLAS:
     this.textChunks = [];
     this.currentMimeType = '';
     this.streamCallback = callback || null;
+    this.wavOptions = null;
+    this.headerSent = false;
 
     // Enviar mensaje
     this.session!.sendClientContent({
@@ -143,7 +178,7 @@ REGLAS:
     // Esperar a que el turno esté completo
     await this.waitForTurnComplete();
 
-    // Convertir todos los chunks acumulados a WAV
+    // Convertir todos los chunks acumulados a WAV (para respuesta final)
     let audioData = '';
     let mimeType = 'audio/wav';
 
@@ -209,40 +244,34 @@ REGLAS:
       bitsPerSample,
     } = options;
 
-    // http://soundfile.sapp.org/doc/WaveFormat
     const byteRate = sampleRate * numChannels * bitsPerSample / 8;
     const blockAlign = numChannels * bitsPerSample / 8;
     const buffer = Buffer.alloc(44);
 
-    buffer.write('RIFF', 0);                      // ChunkID
-    buffer.writeUInt32LE(36 + dataLength, 4);     // ChunkSize
-    buffer.write('WAVE', 8);                      // Format
-    buffer.write('fmt ', 12);                     // Subchunk1ID
-    buffer.writeUInt32LE(16, 16);                 // Subchunk1Size (PCM)
-    buffer.writeUInt16LE(1, 20);                  // AudioFormat (1 = PCM)
-    buffer.writeUInt16LE(numChannels, 22);        // NumChannels
-    buffer.writeUInt32LE(sampleRate, 24);         // SampleRate
-    buffer.writeUInt32LE(byteRate, 28);           // ByteRate
-    buffer.writeUInt16LE(blockAlign, 32);         // BlockAlign
-    buffer.writeUInt16LE(bitsPerSample, 34);      // BitsPerSample
-    buffer.write('data', 36);                     // Subchunk2ID
-    buffer.writeUInt32LE(dataLength, 40);         // Subchunk2Size
+    buffer.write('RIFF', 0);
+    buffer.writeUInt32LE(36 + dataLength, 4);
+    buffer.write('WAVE', 8);
+    buffer.write('fmt ', 12);
+    buffer.writeUInt32LE(16, 16);
+    buffer.writeUInt16LE(1, 20);
+    buffer.writeUInt16LE(numChannels, 22);
+    buffer.writeUInt32LE(sampleRate, 24);
+    buffer.writeUInt32LE(byteRate, 28);
+    buffer.writeUInt16LE(blockAlign, 32);
+    buffer.writeUInt16LE(bitsPerSample, 34);
+    buffer.write('data', 36);
+    buffer.writeUInt32LE(dataLength, 40);
 
     return buffer;
   }
 
   private convertToWav(rawData: string[], mimeType: string): Buffer {
     const options = this.parseMimeType(mimeType);
-    
-    // Convertir todos los chunks de base64 a Buffer
     const buffers = rawData.map(data => Buffer.from(data, 'base64'));
     const dataBuffer = Buffer.concat(buffers);
     const dataLength = dataBuffer.length;
-    
-    // Crear header WAV
     const wavHeader = this.createWavHeader(dataLength, options);
     
-    // Combinar header + data
     return Buffer.concat([wavHeader, dataBuffer]);
   }
 
