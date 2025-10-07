@@ -99,6 +99,8 @@ REGLAS:
           const rawData = part.inlineData.data || '';
           this.currentMimeType = part.inlineData.mimeType || '';
           
+          console.log(`📦 Audio chunk recibido: ${rawData.length} bytes`);
+          
           // Almacenar para la respuesta final
           this.audioChunks.push(rawData);
 
@@ -110,6 +112,7 @@ REGLAS:
         
         // Procesar texto inmediatamente
         if (part.text) {
+          console.log(`📝 Texto recibido: ${part.text}`);
           this.textChunks.push(part.text);
           
           if (this.streamCallback?.onTextChunk) {
@@ -120,8 +123,11 @@ REGLAS:
     }
 
     // Notificar cuando el turno esté completo
-    if (message.serverContent?.turnComplete && this.streamCallback?.onComplete) {
-      this.streamCallback.onComplete();
+    if (message.serverContent?.turnComplete) {
+      console.log('✅ Turno completo');
+      if (this.streamCallback?.onComplete) {
+        this.streamCallback.onComplete();
+      }
       this.headerSent = false; // Reset para el próximo mensaje
     }
   }
@@ -196,12 +202,18 @@ REGLAS:
   }
 
   private waitForTurnComplete(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const originalCallback = this.streamCallback;
+      
+      // Timeout de 30 segundos
+      const timeout = setTimeout(() => {
+        reject(new Error('Timeout: Gemini no respondió en 30 segundos'));
+      }, 30000);
       
       this.streamCallback = {
         ...originalCallback,
         onComplete: () => {
+          clearTimeout(timeout);
           if (originalCallback?.onComplete) {
             originalCallback.onComplete();
           }
