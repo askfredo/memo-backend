@@ -35,7 +35,7 @@ export class GeminiLiveService {
   }
 
   async connect(): Promise<void> {
-    const model = 'gemini-2.5-flash-exp-native-audio-thinking-dialog';
+    const model = 'gemini-2.5-flash-preview-tts';
 
     const config = {
       responseModalities: [Modality.AUDIO],
