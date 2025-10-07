@@ -41,7 +41,7 @@ class SmartAssistantController {
           const voiceResponse = await geminiLiveService.sendMessage('Listo, conversación guardada como nota');
           return res.json({
             type: 'conversation_saved',
-            response: voiceResponse.text || 'Listo, conversación guardada como nota',
+            response: 'Listo, conversación guardada como nota',
             audioData: voiceResponse.audioData,
             mimeType: voiceResponse.mimeType,
             note: result.rows[0]
@@ -68,20 +68,20 @@ class SmartAssistantController {
 
         const shouldOfferSave = this.shouldOfferSaveConversation(conversationHistory);
         
-        // ✅ USAR GEMINI LIVE PARA VOZ NATIVA
+        // ✅ USAR GEMINI LIVE PARA LEER LA RESPUESTA
         if (useNativeVoice) {
-          console.log('🎵 Generando audio con Gemini Live...');
+          console.log('🎵 Generando audio con Gemini Live para:', aiResponse);
+          // Enviar solo el texto para que lo lea
           const voiceResponse = await geminiLiveService.sendMessage(aiResponse);
           
           console.log('✅ Audio generado:', {
             audioLength: voiceResponse.audioData.length,
-            mimeType: voiceResponse.mimeType,
-            textLength: voiceResponse.text.length
+            mimeType: voiceResponse.mimeType
           });
 
           return res.json({
             type: 'conversation',
-            response: aiResponse,
+            response: aiResponse, // El texto original de flash-lite
             audioData: voiceResponse.audioData,
             mimeType: voiceResponse.mimeType,
             shouldOfferSave
