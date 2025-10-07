@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { db } from '../db/index';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AIService } from '../services/aiService';
+import { geminiLiveService } from '../services/geminiLiveService';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '');
 const aiService = new AIService();
@@ -15,7 +16,8 @@ class SmartAssistantController {
         return res.status(400).json({ error: 'Message is required' });
       }
 
-      console.log('ðŸŽ¤ Mensaje:', message);
+      console.log('🎤 Mensaje:', message);
+      console.log('🔊 useNativeVoice:', useNativeVoice);
 
       const wantsToSaveConversation = this.detectSaveConversationIntent(message);
       
@@ -24,7 +26,7 @@ class SmartAssistantController {
           .map((msg: any) => `${msg.type === 'user' ? 'Yo' : 'AI'}: ${msg.text}`)
           .join('\n\n');
 
-        const title = `ConversaciÃ³n con AI - ${new Date().toLocaleDateString('es-ES')}`;
+        const title = `Conversación con AI - ${new Date().toLocaleDateString('es-ES')}`;
         const content = `${title}\n\n${formattedConversation}`;
 
         const result = await db.query(
@@ -34,30 +36,90 @@ class SmartAssistantController {
           [userId, content, 'simple_note', ['#conversacion', '#ai'], JSON.stringify({ type: 'ai_conversation' })]
         );
 
+        if (useNativeVoice) {
+          const voiceResponse = await geminiLiveService.sendMessage('Listo, conversación guardada como nota');
+          return res.json({
+            type: 'conversation_saved',
+            response: 'Listo, conversación guardada como nota',
+            audioData: voiceResponse.audioData,
+            mimeType: voiceResponse.mimeType,
+            note: result.rows[0]
+          });
+        }
+
         return res.json({
           type: 'conversation_saved',
-          response: 'Listo, conversaciÃ³n guardada como nota',
+          response: 'Listo, conversación guardada como nota',
           note: result.rows[0]
         });
       }
 
       const intent = await this.detectIntent(message);
-      console.log('ðŸŽ¯ IntenciÃ³n:', intent);
+      console.log('🎯 Intención:', intent);
 
       if (intent === 'question') {
         const context = await this.getUserContext(userId, message);
-        const aiResponse = await this.generateResponse(message, context, conversationHistory);
         
-        if (!aiResponse || aiResponse.trim() === '') {
-          throw new Error('Respuesta vacÃ­a generada');
+        // ✅ USAR GEMINI LIVE PARA TODO (genera respuesta + audio)
+        if (useNativeVoice) {
+          console.log('🎵 Usando Gemini Live con contexto...');
+          
+          // Construir el prompt con contexto
+          let conversationContext = '';
+          if (conversationHistory.length > 0) {
+            conversationContext = '\n\nHistorial reciente:\n';
+            conversationHistory.slice(-6).forEach((msg: any) => {
+              conversationContext += `${msg.type === 'user' ? 'Usuario' : 'Tú'}: ${msg.text}\n`;
+            });
+          }
+
+          const isPersonalQuestion = /qué|cuál|cuándo|dónde|tengo|mis|mi|eventos|tareas|notas|cumpleaños|reunión|cita|lista/i.test(message);
+
+          let fullPrompt = '';
+          
+          if (isPersonalQuestion && context.length > 50) {
+            fullPrompt = `Eres MemoVoz, un asistente personal. Responde de forma natural y breve (2-3 oraciones máximo).
+
+${context}${conversationContext}
+
+Usuario pregunta: ${message}
+
+Responde usando la información del contexto:`;
+          } else {
+            fullPrompt = `Eres MemoVoz, un asistente personal conversacional. Responde de forma natural y breve (2-3 oraciones máximo).${conversationContext}
+
+Usuario: ${message}`;
+          }
+
+          const voiceResponse = await geminiLiveService.sendMessage(fullPrompt);
+          
+          // Usar el texto que Gemini Live generó
+          const aiResponse = voiceResponse.text || 'Lo siento, no pude procesar eso.';
+          
+          console.log('✅ Respuesta con audio:', {
+            text: aiResponse.substring(0, 100),
+            audioLength: voiceResponse.audioData.length,
+            mimeType: voiceResponse.mimeType
+          });
+
+          const shouldOfferSave = this.shouldOfferSaveConversation(conversationHistory);
+
+          return res.json({
+            type: 'conversation',
+            response: aiResponse,
+            audioData: voiceResponse.audioData,
+            mimeType: voiceResponse.mimeType,
+            shouldOfferSave
+          });
         }
 
+        // Fallback sin voz nativa (flash-lite)
+        const aiResponse = await this.generateResponse(message, context, conversationHistory);
         const shouldOfferSave = this.shouldOfferSaveConversation(conversationHistory);
         
         return res.json({
           type: 'conversation',
           response: aiResponse,
-          hasNativeAudio: false,
           shouldOfferSave
         });
       } else {
@@ -95,35 +157,58 @@ class SmartAssistantController {
             minute: classification.entities.time ? '2-digit' : undefined
           });
 
-          const verbalResponse = `Listo, agendÃ© ${titleWithEmoji} para ${dateStr}${classification.entities.location ? ' en ' + classification.entities.location : ''}`;
+          const verbalResponse = `Listo, agendé ${titleWithEmoji} para ${dateStr}${classification.entities.location ? ' en ' + classification.entities.location : ''}`;
+
+          if (useNativeVoice) {
+            const voiceResponse = await geminiLiveService.sendMessage(verbalResponse);
+            return res.json({
+              type: 'event_created',
+              response: verbalResponse,
+              audioData: voiceResponse.audioData,
+              mimeType: voiceResponse.mimeType,
+              note,
+              event: eventResult.rows[0],
+              classification
+            });
+          }
 
           return res.json({
             type: 'event_created',
             response: verbalResponse,
             note,
             event: eventResult.rows[0],
-            classification,
-            shouldSpeak: true // Nueva bandera para indicar que debe hablar
+            classification
           });
         }
 
         // Respuesta verbal para notas
         const verbalResponse = classification.intent === 'checklist_note' 
-          ? 'Perfecto, guardÃ© tu lista de tareas'
+          ? 'Perfecto, guardé tu lista de tareas'
           : classification.intent === 'reminder'
-          ? 'Listo, guardÃ© tu recordatorio'
+          ? 'Listo, guardé tu recordatorio'
           : 'Nota guardada correctamente';
+
+        if (useNativeVoice) {
+          const voiceResponse = await geminiLiveService.sendMessage(verbalResponse);
+          return res.json({
+            type: 'note_created',
+            response: verbalResponse,
+            audioData: voiceResponse.audioData,
+            mimeType: voiceResponse.mimeType,
+            note,
+            classification
+          });
+        }
 
         return res.json({
           type: 'note_created',
           response: verbalResponse,
           note,
-          classification,
-          shouldSpeak: true
+          classification
         });
       }
     } catch (error: any) {
-      console.error('âŒ Error:', error);
+      console.error('❌ Error:', error);
       res.status(500).json({ 
         error: 'Internal server error', 
         details: error.message 
@@ -132,7 +217,7 @@ class SmartAssistantController {
   }
 
   private detectSaveConversationIntent(message: string): boolean {
-    const savePatterns = /guarda.*conversaciÃ³n|guarda.*esto|guarda.*chat|guarda.*todo|guardar.*conversaciÃ³n|anota.*conversaciÃ³n|salva.*conversaciÃ³n/i;
+    const savePatterns = /guarda.*conversación|guarda.*esto|guarda.*chat|guarda.*todo|guardar.*conversación|anota.*conversación|salva.*conversación/i;
     return savePatterns.test(message);
   }
 
@@ -141,7 +226,7 @@ class SmartAssistantController {
     
     const lastThree = conversationHistory.slice(-3);
     const hasRecentOffer = lastThree.some((msg: any) => 
-      msg.text?.includes('guardar') || msg.text?.includes('conversaciÃ³n')
+      msg.text?.includes('guardar') || msg.text?.includes('conversación')
     );
     
     return !hasRecentOffer;
@@ -158,7 +243,7 @@ class SmartAssistantController {
       });
 
       const prompt = `Analiza este mensaje y determina si es:
-- "question": El usuario hace una pregunta, quiere informaciÃ³n, o conversa
+- "question": El usuario hace una pregunta, quiere información, o conversa
 - "action": El usuario quiere crear una nota, tarea, evento o recordatorio
 
 Mensaje: "${message}"
@@ -170,7 +255,7 @@ Responde SOLO con: question o action`;
       
       return response.includes('action') ? 'action' : 'question';
     } catch (error) {
-      console.error('Error detectando intenciÃ³n:', error);
+      console.error('Error detectando intención:', error);
       return 'question';
     }
   }
@@ -180,7 +265,6 @@ Responde SOLO con: question o action`;
       const now = new Date();
       const monthFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-      // Obtener TODOS los eventos prÃ³ximos
       const eventsResult = await db.query(
         `SELECT title, description, start_datetime, location 
          FROM calendar_events 
@@ -189,7 +273,6 @@ Responde SOLO con: question o action`;
         [userId, now.toISOString(), monthFromNow.toISOString()]
       );
 
-      // BÃºsqueda inteligente de notas segÃºn palabras clave del mensaje
       const keywords = this.extractKeywords(currentMessage);
       
       let notesQuery = `
@@ -200,7 +283,6 @@ Responde SOLO con: question o action`;
       
       const queryParams: any[] = [userId];
       
-      // Si hay palabras clave, hacer bÃºsqueda por similitud
       if (keywords.length > 0) {
         notesQuery += ` AND (`;
         keywords.forEach((keyword, idx) => {
@@ -211,15 +293,15 @@ Responde SOLO con: question o action`;
         notesQuery += `)`;
       }
       
-      notesQuery += ` ORDER BY created_at DESC LIMIT 50`;
+      notesQuery += ` ORDER BY created_at DESC LIMIT 30`;
 
       const notesResult = await db.query(notesQuery, queryParams);
 
-      let context = 'CONTEXTO DEL USUARIO:\n\n';
+      let context = '';
 
       if (eventsResult.rows.length > 0) {
-        context += `EVENTOS PRÃ“XIMOS (${eventsResult.rows.length} total):\n`;
-        eventsResult.rows.forEach(event => {
+        context += `Eventos próximos del usuario:\n`;
+        eventsResult.rows.slice(0, 10).forEach(event => {
           const date = new Date(event.start_datetime).toLocaleDateString('es-ES', { 
             weekday: 'short',
             day: 'numeric', 
@@ -235,13 +317,11 @@ Responde SOLO con: question o action`;
       }
 
       if (notesResult.rows.length > 0) {
-        context += `NOTAS (${notesResult.rows.length} encontradas):\n`;
-        notesResult.rows.forEach(note => {
-          const preview = note.content.substring(0, 120);
-          const tags = note.hashtags?.join(' ') || '';
-          context += `- ${preview}${note.content.length > 120 ? '...' : ''} ${tags}\n`;
+        context += `Notas guardadas:\n`;
+        notesResult.rows.slice(0, 10).forEach(note => {
+          const preview = note.content.substring(0, 80);
+          context += `- ${preview}${note.content.length > 80 ? '...' : ''}\n`;
         });
-        context += '\n';
       }
 
       return context;
@@ -252,15 +332,14 @@ Responde SOLO con: question o action`;
   }
 
   private extractKeywords(message: string): string[] {
-    // Palabras comunes a ignorar
-    const stopWords = ['el', 'la', 'los', 'las', 'un', 'una', 'de', 'del', 'en', 'y', 'o', 'que', 'quÃ©', 'cuÃ¡l', 'cuÃ¡les', 'mi', 'mis', 'tu', 'tus', 'tengo', 'tienes', 'hay', 'estÃ¡', 'estÃ¡n', 'a', 'para', 'por'];
+    const stopWords = ['el', 'la', 'los', 'las', 'un', 'una', 'de', 'del', 'en', 'y', 'o', 'que', 'qué', 'cuál', 'cuáles', 'mi', 'mis', 'tu', 'tus', 'tengo', 'tienes', 'hay', 'está', 'están', 'a', 'para', 'por'];
     
     const words = message.toLowerCase()
-      .replace(/[^\wÃ¡Ã©Ã­Ã³ÃºÃ±Ã¼\s]/g, '')
+      .replace(/[^\wáéíóúñü\s]/g, '')
       .split(/\s+/)
       .filter(word => word.length > 3 && !stopWords.includes(word));
     
-    return [...new Set(words)]; // Eliminar duplicados
+    return [...new Set(words)];
   }
 
   private async generateResponse(message: string, context: string, conversationHistory: any[]): Promise<string> {
@@ -273,7 +352,7 @@ Responde SOLO con: question o action`;
         }
       });
 
-      const isPersonalQuestion = /quÃ©|cuÃ¡l|cuÃ¡ndo|dÃ³nde|tengo|mis|mi|eventos|tareas|notas|cumpleaÃ±os|reuniÃ³n|cita|lista/i.test(message);
+      const isPersonalQuestion = /qué|cuál|cuándo|dónde|tengo|mis|mi|eventos|tareas|notas|cumpleaños|reunión|cita|lista/i.test(message);
 
       let conversationContext = '';
       if (conversationHistory.length > 0) {
@@ -284,14 +363,14 @@ Responde SOLO con: question o action`;
         conversationContext += '\n';
       }
 
-      let systemPrompt = `Eres MemoVoz, un asistente personal conversacional en espaÃ±ol.
+      let systemPrompt = `Eres MemoVoz, un asistente personal conversacional en español.
 
 IMPORTANTE:
-- Responde de forma natural y breve (2-3 oraciones mÃ¡ximo)
-- MantÃ©n coherencia con el historial
+- Responde de forma natural y breve (2-3 oraciones máximo)
+- Mantén coherencia con el historial
 - Cuando te pregunten por eventos, notas o tareas, busca en el CONTEXTO completo
-- Si hay mucha informaciÃ³n, resume lo mÃ¡s relevante
-- Si no encuentras algo especÃ­fico, dilo claramente
+- Si hay mucha información, resume lo más relevante
+- Si no encuentras algo específico, dilo claramente
 
 ${conversationContext}`;
 
@@ -303,7 +382,7 @@ ${context}
 
 Pregunta: ${message}
 
-Responde usando TODA la informaciÃ³n disponible del contexto:`;
+Responde usando TODA la información disponible del contexto:`;
       } else {
         prompt = `${systemPrompt}
 
@@ -316,13 +395,13 @@ Responde manteniendo coherencia con el historial:`;
       const response = result.response.text().trim();
       
       if (response.includes('**Composing') || response.includes('crafted') || response.length > 400) {
-        return 'Disculpa, Â¿puedes reformular tu pregunta?';
+        return 'Disculpa, ¿puedes reformular tu pregunta?';
       }
       
       return response;
     } catch (error) {
       console.error('Error generando respuesta:', error);
-      return 'Hola, Â¿en quÃ© puedo ayudarte?';
+      return 'Hola, ¿en qué puedo ayudarte?';
     }
   }
 
