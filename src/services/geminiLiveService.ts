@@ -30,7 +30,7 @@ export class GeminiLiveService {
 
     const config = {
       responseModalities: [Modality.AUDIO],
-      mediaResolution: MediaResolution.MEDIA_RESOLUTION_LOW, // ✅ BAJA para más velocidad
+      mediaResolution: MediaResolution.MEDIA_RESOLUTION_MEDIUM,
       speechConfig: {
         voiceConfig: {
           prebuiltVoiceConfig: {
@@ -44,18 +44,16 @@ export class GeminiLiveService {
 
 PERSONALIDAD:
 - Amigable, natural y cercano
-- MUY CONCISO: responde en 1-2 oraciones MÁXIMO
+- Conciso: responde en 2-3 oraciones máximo
 - Útil: usa la información de contexto cuando esté disponible
 - Profesional pero relajado
 
-REGLAS CRÍTICAS:
-- Respuestas ULTRA BREVES (máximo 15 palabras cuando sea posible)
-- Si te dan contexto (eventos, notas), úsalo pero resúmelo
-- Si no encuentras información, dilo en 1 oración
-- Mantén coherencia con el historial
+REGLAS:
+- Si te dan contexto (eventos, notas), úsalo para responder
+- Si no encuentras información, dilo claramente
+- Mantén coherencia con el historial de conversación
 - Responde SOLO en español
-- No inventes información que no esté en el contexto
-- NUNCA des explicaciones largas`
+- No inventes información que no esté en el contexto`
         }]
       },
       contextWindowCompression: {
