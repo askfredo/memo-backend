@@ -39,9 +39,9 @@ export class AIService {
 
     try {
       const model = this.genAI.getGenerativeModel({ 
-        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+        model: 'gemini-2.5-flash-lite',
         generationConfig: {
-          temperature: 0.7,
+          temperature: 1,
           responseMimeType: 'application/json',
         },
       });
