@@ -27,7 +27,7 @@ export class GeminiLiveService {
       speechConfig: {
         voiceConfig: {
           prebuiltVoiceConfig: {
-            voiceName: 'Puck',
+            voiceName: 'Zephyr', // 🎤 Voz mejorada: más natural e inteligente
           }
         }
       },
