@@ -9,13 +9,22 @@ const aiService = new AIService();
 class SmartAssistantController {
   async processVoiceInput(req: Request, res: Response) {
     try {
-      const { message, conversationHistory = [], userId = '00000000-0000-0000-0000-000000000001', useNativeVoice = false } = req.body;
+      const { message, conversationHistory = [], userId = '00000000-0000-0000-0000-000000000001', useNativeVoice = false, enrichedContext } = req.body;
 
       if (!message || message.trim() === '') {
         return res.status(400).json({ error: 'Message is required' });
       }
 
       console.log('ðŸŽ¤ Mensaje:', message);
+
+      // 🆕 Log del contexto enriquecido si está presente
+      if (enrichedContext) {
+        console.log('🧠 Contexto enriquecido recibido:');
+        console.log('   - Tema actual:', enrichedContext.current_topic || 'N/A');
+        console.log('   - Último video:', enrichedContext.last_youtube_video?.title || 'N/A');
+        console.log('   - Última búsqueda:', enrichedContext.last_web_search?.query || 'N/A');
+        console.log('   - Mensajes en sesión:', enrichedContext.conversation_summary?.message_count || 0);
+      }
 
       const wantsToSaveConversation = this.detectSaveConversationIntent(message);
       
@@ -41,12 +50,34 @@ class SmartAssistantController {
         });
       }
 
-      const intent = await this.detectIntent(message);
+      // 🆕 Detectar intent considerando el contexto enriquecido
+      const intent = await this.detectIntent(message, enrichedContext);
       console.log('ðŸŽ¯ IntenciÃ³n:', intent);
+
+      //🆕 Detectar búsquedas web/YouTube basadas en contexto
+      if (intent === 'web_search' || intent === 'youtube_search') {
+        // Expandir query usando el contexto si es necesario
+        let expandedQuery = message;
+
+        if (enrichedContext?.last_youtube_video && /ingredientes|receta|pasos|cómo|precio|dónde/i.test(message)) {
+          const videoTitle = enrichedContext.last_youtube_video.title;
+          expandedQuery = `${message.replace(/busca|buscar/gi, '').trim()} ${videoTitle}`;
+          console.log('🔗 Query expandido con video:', expandedQuery);
+        }
+
+        return res.json({
+          type: 'conversation',
+          intent: intent,
+          response: intent === 'youtube_search'
+            ? 'Voy a buscar videos para ti'
+            : 'Déjame buscar eso en internet',
+          shouldSpeak: true
+        });
+      }
 
       if (intent === 'question') {
         const context = await this.getUserContext(userId, message);
-        const aiResponse = await this.generateResponse(message, context, conversationHistory);
+        const aiResponse = await this.generateResponse(message, context, conversationHistory, enrichedContext);
         
         if (!aiResponse || aiResponse.trim() === '') {
           throw new Error('Respuesta vacÃ­a generada');
@@ -147,28 +178,55 @@ class SmartAssistantController {
     return !hasRecentOffer;
   }
 
-  private async detectIntent(message: string): Promise<'question' | 'action'> {
+  private async detectIntent(message: string, enrichedContext?: any): Promise<'question' | 'action' | 'web_search' | 'youtube_search'> {
     try {
-      const model = genAI.getGenerativeModel({ 
+      const model = genAI.getGenerativeModel({
         model: 'gemini-2.5-flash-lite',
         generationConfig: {
           temperature: 0.3,
-          maxOutputTokens: 50,
+          maxOutputTokens: 80,
         }
       });
 
-      const prompt = `Analiza este mensaje y determina si es:
-- "question": El usuario hace una pregunta, quiere informaciÃ³n, o conversa
-- "action": El usuario quiere crear una nota, tarea, evento o recordatorio
+      // 🆕 Construir contexto para el LLM
+      let contextSection = '';
+      if (enrichedContext) {
+        contextSection = '\n\nCONTEXTO DISPONIBLE:\n';
+        if (enrichedContext.last_youtube_video) {
+          contextSection += `- Último video visto: "${enrichedContext.last_youtube_video.title}"\n`;
+        }
+        if (enrichedContext.last_web_search) {
+          contextSection += `- Última búsqueda web: "${enrichedContext.last_web_search.query}"\n`;
+        }
+        if (enrichedContext.last_note) {
+          contextSection += `- Última nota: "${enrichedContext.last_note.content.substring(0, 50)}..."\n`;
+        }
+      }
+
+      const prompt = `Analiza este mensaje y determina el intent:${contextSection}
+
+- "question": Pregunta, conversación, información
+- "action": Crear nota, tarea, evento o recordatorio
+- "web_search": Buscar información en internet (clima, precios, noticias, etc.)
+- "youtube_search": Buscar videos en YouTube
+
+REGLAS ESPECIALES (IMPORTANTE):
+1. Si hay un video en contexto y el mensaje menciona "ingredientes", "receta", "pasos" → web_search
+2. Si dice "busca", "búscame", "encuéntrame" y NO es para videos → web_search
+3. Si dice "video", "canal", "YouTube" → youtube_search
+4. Si dice "guarda", "anota" y hay búsqueda reciente → action
 
 Mensaje: "${message}"
 
-Responde SOLO con: question o action`;
+Responde SOLO con: question, action, web_search o youtube_search`;
 
       const result = await model.generateContent(prompt);
       const response = result.response.text().trim().toLowerCase();
-      
-      return response.includes('action') ? 'action' : 'question';
+
+      if (response.includes('web_search')) return 'web_search';
+      if (response.includes('youtube_search')) return 'youtube_search';
+      if (response.includes('action')) return 'action';
+      return 'question';
     } catch (error) {
       console.error('Error detectando intenciÃ³n:', error);
       return 'question';
@@ -263,7 +321,7 @@ Responde SOLO con: question o action`;
     return [...new Set(words)]; // Eliminar duplicados
   }
 
-  private async generateResponse(message: string, context: string, conversationHistory: any[]): Promise<string> {
+  private async generateResponse(message: string, context: string, conversationHistory: any[], enrichedContext?: any): Promise<string> {
     try {
       const model = genAI.getGenerativeModel({ 
         model: 'gemini-2.5-flash-lite',
@@ -284,32 +342,65 @@ Responde SOLO con: question o action`;
         conversationContext += '\n';
       }
 
-      let systemPrompt = `Eres MemoVoz, un asistente personal conversacional en espaÃ±ol.
+      // 🆕 Agregar contexto enriquecido al system prompt
+      let enrichedSection = '';
+      if (enrichedContext) {
+        enrichedSection = '\n\n## 🧠 CONTEXTO DE LA SESIÓN:\n';
+
+        if (enrichedContext.current_topic) {
+          enrichedSection += `📌 Tema actual: ${enrichedContext.current_topic}\n`;
+        }
+
+        if (enrichedContext.last_youtube_video) {
+          const video = enrichedContext.last_youtube_video;
+          enrichedSection += `\n🎥 Último video visto: "${video.title}" por ${video.channel}\n`;
+        }
+
+        if (enrichedContext.last_web_search) {
+          const search = enrichedContext.last_web_search;
+          const answerPreview = search.answer.substring(0, 150);
+          enrichedSection += `\n🌐 Última búsqueda: "${search.query}"\n   Respuesta: ${answerPreview}...\n`;
+        }
+
+        if (enrichedContext.last_note) {
+          const note = enrichedContext.last_note;
+          enrichedSection += `\n📝 Última nota: ${note.content.substring(0, 80)}...\n`;
+        }
+
+        if (enrichedContext.last_event) {
+          const event = enrichedContext.last_event;
+          enrichedSection += `\n📅 Último evento: ${event.title} (${event.date})\n`;
+        }
+
+        enrichedSection += '\n⚠️ IMPORTANTE: Si el usuario menciona "eso", "ese", "los ingredientes", está refiriéndose al contexto anterior.\n';
+      }
+
+      let systemPrompt = `Eres MemoVoz, un asistente personal conversacional en español.
 
 IMPORTANTE:
-- Responde de forma natural y breve (2-3 oraciones mÃ¡ximo)
-- MantÃ©n coherencia con el historial
+- Responde de forma natural y breve (2-3 oraciones máximo)
+- Mantén coherencia con el historial
 - Cuando te pregunten por eventos, notas o tareas, busca en el CONTEXTO completo
-- Si hay mucha informaciÃ³n, resume lo mÃ¡s relevante
-- Si no encuentras algo especÃ­fico, dilo claramente
-
+- Si hay mucha información, resume lo más relevante
+- Si no encuentras algo específico, dilo claramente
+${enrichedSection}
 ${conversationContext}`;
 
       let prompt = '';
-      
+
       if (isPersonalQuestion && context.length > 50) {
         prompt = `${systemPrompt}
 ${context}
 
 Pregunta: ${message}
 
-Responde usando TODA la informaciÃ³n disponible del contexto:`;
+Responde usando TODA la información disponible del contexto:`;
       } else {
         prompt = `${systemPrompt}
 
 Pregunta: ${message}
 
-Responde manteniendo coherencia con el historial:`;
+Responde manteniendo coherencia con el historial y el contexto de la sesión:`;
       }
 
       const result = await model.generateContent(prompt);
