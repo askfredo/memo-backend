@@ -336,7 +336,7 @@ Responde SOLO con: question, action, web_search o youtube_search`;
         }
       });
 
-      const isPersonalQuestion = /quÃ©|cuÃ¡l|cuÃ¡ndo|dÃ³nde|tengo|mis|mi|eventos|tareas|notas|cumpleaÃ±os|reuniÃ³n|cita|lista/i.test(message);
+      const isPersonalQuestion = /quÃ©|cuÃ¡l|cuÃ¡ndo|dÃ³nde|tengo|mis|mi|eventos|tareas|notas|cumpleaÃ±os|reuniÃ³n|cita|lista|agenda|calendario|recordatorio|prÃ³ximo|siguiente|hoy|maÃ±ana|semana|mes/i.test(message);
 
       let conversationContext = '';
       if (conversationHistory.length > 0) {
@@ -400,13 +400,14 @@ ${conversationContext}`;
 
       let prompt = '';
 
-      if (isPersonalQuestion && context.length > 50) {
+      // 🆕 Siempre incluir context si está disponible (eventos, notas)
+      if (context && context.length > 50) {
         prompt = `${systemPrompt}
 ${context}
 
 Pregunta: ${message}
 
-Responde usando TODA la información disponible del contexto:`;
+Responde usando TODA la información disponible del contexto (eventos, notas, clima):`;
       } else {
         prompt = `${systemPrompt}
 
