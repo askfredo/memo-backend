@@ -197,6 +197,10 @@ class SmartAssistantController {
         }
         if (enrichedContext.last_web_search) {
           contextSection += `- Última búsqueda web: "${enrichedContext.last_web_search.query}"\n`;
+          contextSection += `  Respuesta: ${enrichedContext.last_web_search.answer.substring(0, 100)}...\n`;
+        }
+        if (enrichedContext.last_event) {
+          contextSection += `- Último evento creado: "${enrichedContext.last_event.title}" el ${enrichedContext.last_event.date}\n`;
         }
         if (enrichedContext.last_note) {
           contextSection += `- Última nota: "${enrichedContext.last_note.content.substring(0, 50)}..."\n`;
@@ -205,16 +209,17 @@ class SmartAssistantController {
 
       const prompt = `Analiza este mensaje y determina el intent:${contextSection}
 
-- "question": Pregunta, conversación, información
+- "question": Pregunta, conversación, pide recomendación o consejo
 - "action": Crear nota, tarea, evento o recordatorio
-- "web_search": Buscar información en internet (clima, precios, noticias, etc.)
-- "youtube_search": Buscar videos en YouTube
+- "web_search": SOLO si pide explícitamente buscar algo nuevo en internet
+- "youtube_search": SOLO si pide explícitamente buscar videos
 
 REGLAS ESPECIALES (IMPORTANTE):
 1. Si hay un video en contexto y el mensaje menciona "ingredientes", "receta", "pasos" → web_search
-2. Si dice "busca", "búscame", "encuéntrame" y NO es para videos → web_search
+2. Si dice "busca", "búscame", "encuéntrame" algo NUEVO → web_search
 3. Si dice "video", "canal", "YouTube" → youtube_search
 4. Si dice "guarda", "anota" y hay búsqueda reciente → action
+5. ⚠️ Si pide "recomienda", "qué debo", "cómo debo", "qué me pongo" Y HAY CONTEXTO DISPONIBLE → question (NO web_search)
 
 Mensaje: "${message}"
 
@@ -358,8 +363,8 @@ Responde SOLO con: question, action, web_search o youtube_search`;
 
         if (enrichedContext.last_web_search) {
           const search = enrichedContext.last_web_search;
-          const answerPreview = search.answer.substring(0, 150);
-          enrichedSection += `\n🌐 Última búsqueda: "${search.query}"\n   Respuesta: ${answerPreview}...\n`;
+          // 🆕 Mostrar TODA la respuesta de búsqueda web (especialmente clima)
+          enrichedSection += `\n🌐 Última búsqueda web: "${search.query}"\n   Respuesta completa: ${search.answer}\n`;
         }
 
         if (enrichedContext.last_note) {
@@ -372,7 +377,13 @@ Responde SOLO con: question, action, web_search o youtube_search`;
           enrichedSection += `\n📅 Último evento: ${event.title} (${event.date})\n`;
         }
 
-        enrichedSection += '\n⚠️ IMPORTANTE: Si el usuario menciona "eso", "ese", "los ingredientes", está refiriéndose al contexto anterior.\n';
+        enrichedSection += `
+⚠️ REGLAS CRÍTICAS:
+1. Si el usuario menciona "eso", "ese", "los ingredientes", "el evento", "esa ropa" → está refiriéndose al contexto anterior
+2. Si pide recomendaciones sobre vestimenta/ropa Y hay información de clima → USA LA INFORMACIÓN DEL CLIMA para recomendar
+3. Si hay eventos en contexto y pregunta sobre ellos → USA LA INFORMACIÓN DEL EVENTO
+4. NUNCA digas "no sé" o "no tengo información" si el contexto tiene los datos necesarios
+`;
       }
 
       let systemPrompt = `Eres MemoVoz, un asistente personal conversacional en español.
@@ -383,6 +394,7 @@ IMPORTANTE:
 - Cuando te pregunten por eventos, notas o tareas, busca en el CONTEXTO completo
 - Si hay mucha información, resume lo más relevante
 - Si no encuentras algo específico, dilo claramente
+- 🔥 MUY IMPORTANTE: Si hay contexto de sesión (clima, video, búsqueda web), ÚSALO para responder. No digas "no sé el clima" si está en el contexto.
 ${enrichedSection}
 ${conversationContext}`;
 
